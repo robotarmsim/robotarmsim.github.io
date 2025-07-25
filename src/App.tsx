@@ -278,8 +278,6 @@ export default function App() {
           pointerEvents: 'none',
         }}>
           <b>Task Prompt: Carefree (PLACEHOLDER)</b><br />
-          Trace the path by dragging keyframes.<br />
-          Use graphs to adjust curvature, speed, and noise.
         </div>
 
         <div style={{
@@ -295,9 +293,6 @@ export default function App() {
           pointerEvents: 'none',
         }}>
           <b>Instructions: (EXAMPLE)</b><br />
-          • Drag pink dots to adjust path shape.<br />
-          • Click on path line to add new keyframes.<br />
-          • Press Play to animate the arm.
         </div>
       </div >
     </>
