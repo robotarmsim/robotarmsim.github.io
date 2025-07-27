@@ -8,7 +8,7 @@ import { PlayButton } from './components/UI/PlayButton';
 import { MotionParameterMap } from './utils/MotionParameterMap';
 import { perlin1D } from './utils/perlin';
 import { useZones } from './types/zones';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import MarkdownViewer from './MarkdownViewer';
 
 import { CurrentTaskDisplay } from './components/CurrentTaskDisplay';
@@ -212,7 +212,7 @@ export default function App() {
   }, []);
 
   return (
-    <Router>
+    <BrowserRouter>
       <Routes>
         <Route path="/robotarmsim/" element={
           <div id="root">
@@ -308,6 +308,6 @@ export default function App() {
           <MarkdownViewer filePath="AssetHelp.markdown" />
         } />
       </Routes>
-    </Router>
+    </BrowserRouter>
   );
 }
