@@ -1,13 +1,19 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { RobotArm, type Point } from '../utils/RobotArm';
 import { catmullRomSpline } from '../utils/CatmullRom';
+import type { Zone } from '../types/zones';
+import Triangle from './Triangle.tsx';
 
-type Zone = {
-  id: number;
-  x: number;
-  y: number;
-  radius: number;
-};
+import checkImg from '../assets/check.svg';
+import xImg from '../assets/x-fail.svg';
+
+const checkImage = new Image();
+checkImage.src = checkImg;
+
+const xImage = new Image();
+xImage.src = xImg;
+
+
 
 interface CanvasStageProps {
   width: number;
@@ -22,6 +28,7 @@ interface CanvasStageProps {
   setZones: React.Dispatch<React.SetStateAction<Zone[]>>;
   curvatureGraph: Point[];
 }
+
 
 export function CanvasStage({
   width,
@@ -40,6 +47,7 @@ export function CanvasStage({
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
   const [draggingZoneId, setDraggingZoneId] = useState<number | null>(null);
   const [resizingZoneId, setResizingZoneId] = useState<number | null>(null);
+  const [inAvoidZone, setInAvoidZone] = useState(false);
 
   function getMousePos(e: React.PointerEvent): Point {
     if (!canvasRef.current) return { x: 0, y: 0 };
@@ -202,8 +210,9 @@ export function CanvasStage({
     };
 
     ctx.lineWidth = 10;
-    ctx.strokeStyle = 'white';
-    ctx.fillStyle = 'white';
+    ctx.fillStyle = inAvoidZone ? 'red' : 'white';
+    ctx.strokeStyle = inAvoidZone ? 'red' : 'white';
+
 
     function drawSegment(from: Point, to: Point) {
       const dx = to.x - from.x;
@@ -243,15 +252,21 @@ export function CanvasStage({
     // Draw zones with glowing red effect & resize handles
     zones.forEach(zone => {
       ctx.save();
-      ctx.shadowColor = 'rgba(255, 0, 0, 0.7)';
+      if (zone.type === 'avoid') {
+        ctx.shadowColor = 'rgba(255, 0, 0, 0.7)';
+        ctx.fillStyle = 'rgba(255, 0, 0, 0.4)';
+      } else {
+        ctx.shadowColor = 'rgba(0, 255, 0, 0.7)';
+        ctx.fillStyle = zone.visited ? 'rgba(0, 255, 0, 0.4)' : 'rgba(0, 180, 0, 0.3)';
+      }
+
       ctx.shadowBlur = 20;
-      ctx.fillStyle = 'rgba(255, 0, 0, 0.4)';
       ctx.beginPath();
       ctx.arc(zone.x, zone.y, zone.radius, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
 
-      // Draw resize handle as small white circle on perimeter
+      // Draw resize handle
       const handleX = zone.x + zone.radius * Math.cos(Math.PI / 4);
       const handleY = zone.y + zone.radius * Math.sin(Math.PI / 4);
       ctx.beginPath();
@@ -261,9 +276,23 @@ export function CanvasStage({
       ctx.arc(handleX, handleY, 6, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
+
+      // Draw checkmark if required zone is visited
+      if (zone.type === 'required') {
+        ctx.fillStyle = 'black';
+        ctx.font = '20px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        const symbol = zone.visited ? checkImage : xImage;
+        const size = 35;
+        ctx.drawImage(symbol, zone.x - size / 2, zone.y - size / 2, size, size);
+
+      }
+
     });
 
-    // Draw pink path line
+    // Draw MAIN path line
     ctx.strokeStyle = 'rgba(255, 105, 180, 0.6)';
     ctx.lineWidth = 4;
     ctx.shadowColor = 'rgba(255, 105, 180, 0.8)';
@@ -277,13 +306,7 @@ export function CanvasStage({
 
     // Draw points with bigger hit area
     pathPoints.forEach((pt, i) => {
-      // ctx.beginPath();
-      // ctx.arc(pt.x, pt.y, i === 0 || i === pathPoints.length - 1 ? 12 : 8, 0, Math.PI * 2);
-      // ctx.fillStyle = i === 0 || i === pathPoints.length - 1 ? 'mediumvioletred' : 'deeppink';
-      // ctx.fill();
-
       if (i === 0 || i === pathPoints.length - 1) {
-        drawTriangle(ctx, pt.x, pt.y, 24, 'mediumvioletred');
       } else {
         ctx.beginPath();
         ctx.arc(pt.x, pt.y, 8, 0, Math.PI * 2);
@@ -303,18 +326,6 @@ export function CanvasStage({
 
   }
 
-  function drawTriangle(ctx: CanvasRenderingContext2D, x: number, y: number, size: number, fillStyle: string) {
-    const height = size * Math.sqrt(3) / 2; // equilateral triangle height
-    ctx.beginPath();
-    ctx.moveTo(x, y - (2 / 3) * height); // top vertex
-    ctx.lineTo(x - size / 2, y + height / 3); // bottom left
-    ctx.lineTo(x + size / 2, y + height / 3); // bottom right
-    ctx.closePath();
-    ctx.fillStyle = fillStyle;
-    ctx.fill();
-  }
-
-
   // Adjust robot base & initial angles on mount (or whenever needed)
   useEffect(() => {
     // Position base at left center
@@ -333,24 +344,90 @@ export function CanvasStage({
     draw(ctx);
   }, [pathPoints, angles, draggingIndex, draggingZoneId, resizingZoneId, zones, curvatureGraph]);
 
+  useEffect(() => {
+    const [angle1, angle2] = angles;
+    const [l1, l2] = arm.limbLengths;
+
+    const joint1 = {
+      x: arm.base.x + l1 * Math.cos(angle1),
+      y: arm.base.y + l1 * Math.sin(angle1),
+    };
+    const tip = {
+      x: joint1.x + l2 * Math.cos(angle1 + angle2),
+      y: joint1.y + l2 * Math.sin(angle1 + angle2),
+    };
+
+    let isInAvoidZone = false;
+
+    setZones(prev =>
+      prev.map(zone => {
+        const dx = tip.x - zone.x;
+        const dy = tip.y - zone.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const inside = dist <= zone.radius;
+
+        // mark avoid zone status
+        if (zone.type === 'avoid' && inside) {
+          isInAvoidZone = true;
+        }
+
+        // mark required zone as visited
+        if (zone.type === 'required' && !zone.visited && inside) {
+          return { ...zone, visited: true };
+        }
+
+        return zone;
+      })
+    );
+
+    setInAvoidZone(isInAvoidZone);
+  }, [angles, arm, setZones]);
+
+
   return (
-    <canvas
-      ref={canvasRef}
-      width={width}
-      height={height}
-      style={{
-        width: `${width}px`,
-        height: `${height}px`,
-        border: '1px solid black',
-        touchAction: 'none',
-        userSelect: 'none',
-        cursor: resizingZoneId !== null ? 'nwse-resize' : undefined,
-      }}
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
-      onPointerLeave={handlePointerUp}
-      onPointerCancel={handlePointerUp}
-    />
+    <div style={{ position: 'relative', width, height }}>
+      <canvas
+        ref={canvasRef}
+        width={width}
+        height={height}
+        className={`canvas-stage${resizingZoneId !== null ? ' resizing' : ''}`}
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          width: `${width}px`,
+          height: `${height}px`,
+          pointerEvents: 'auto',
+        }}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerLeave={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+      />
+      <svg
+        width={width}
+        height={height}
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          pointerEvents: 'none', // Let canvas get pointer events
+        }}
+      >
+        {pathPoints.map((pt, i) =>
+          (i === 0 || i === pathPoints.length - 1) ? (
+            <Triangle
+              key={`triangle-${i}`}
+              cx={pt.x}
+              cy={pt.y}
+              size={24}
+              className="start-end-triangle"
+            />
+          ) : null
+        )}
+      </svg>
+    </div>
+
   );
 }

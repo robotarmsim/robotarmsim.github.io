@@ -1,6 +1,7 @@
 // src/components/GraphEditorPanel.tsx
 import React, { useRef, useState } from 'react';
 import { type Point } from '../utils/RobotArm';
+import Triangle from './Triangle.tsx';
 
 interface GraphEditorPanelProps {
     label: string;
@@ -60,15 +61,7 @@ export function GraphEditorPanel({ label, graphPoints, setGraphPoints, pathPoint
         setDraggingIndex(null);
     }
 
-    function Triangle({ cx, cy, size, fill, onPointerDown }: { cx: number; cy: number; size: number; fill: string; onPointerDown?: React.PointerEventHandler<SVGPolygonElement> }) {
-        const height = size * Math.sqrt(3) / 2;
-        const points = [
-            `${cx},${cy - (2 / 3) * height}`, // top
-            `${cx - size / 2},${cy + height / 3}`, // bottom left
-            `${cx + size / 2},${cy + height / 3}` // bottom right
-        ].join(' ');
-        return <polygon points={points} fill={fill} stroke="white" strokeWidth={1} style={{ cursor: 'pointer' }} onPointerDown={onPointerDown} />;
-    }
+    // This is where Triangle function used to be but he graduated to greener pastures.
 
     // Use path-relative distances for X when rendering points and polyline
     const pixelPoints = graphPoints.map((pt, i) => ({
@@ -76,29 +69,26 @@ export function GraphEditorPanel({ label, graphPoints, setGraphPoints, pathPoint
         y: (1 - pt.y) * height,
     }));
 
+    const svgStyle = {
+        width: width,
+        height: height,
+    };
+
+
     return (
-        <div style={{ marginBottom: 12 }}>
+        <div className='svg-container'>
             <strong>{label}</strong>
             <svg
                 ref={svgRef}
-                width={width}
-                height={height}
-                style={{
-                    border: '1px solid #ccc',
-                    background: '#fafafa',
-                    touchAction: 'none',
-                    userSelect: 'none',
-                    display: 'block',
-                }}
+                className="svg-element"
+                style={svgStyle}
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
                 onPointerLeave={handlePointerUp}
             >
                 {/* Draw lines between points */}
                 <polyline
-                    fill="none"
-                    stroke="hotpink"
-                    strokeWidth={2}
+                    className="polyline"
                     points={pixelPoints.map(p => `${p.x},${p.y}`).join(' ')}
                 />
 
@@ -110,8 +100,8 @@ export function GraphEditorPanel({ label, graphPoints, setGraphPoints, pathPoint
                             cx={pt.x}
                             cy={pt.y}
                             size={10}
-                            fill="deeppink"
                             onPointerDown={() => handlePointerDown(i)}
+                            className="shape"
                         />
                     ) : (
                         <circle
@@ -119,11 +109,8 @@ export function GraphEditorPanel({ label, graphPoints, setGraphPoints, pathPoint
                             cx={pt.x}
                             cy={pt.y}
                             r={5}
-                            fill="deeppink"
-                            stroke="white"
-                            strokeWidth={1}
+                            className="shape circle"
                             onPointerDown={() => handlePointerDown(i)}
-                            style={{ cursor: 'pointer' }}
                         />
                     )
                 )}

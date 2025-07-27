@@ -2,43 +2,47 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { RobotArm, type Point } from './utils/RobotArm';
 import { catmullRomSpline } from './utils/CatmullRom';
 import { CanvasStage } from './components/CanvasStage';
+import DevMenu from './components/DevMenu';
 import { GraphEditorPanel } from './components/GraphEditorPanel';
 import { PlayButton } from './components/UI/PlayButton';
 import { MotionParameterMap } from './utils/MotionParameterMap';
 import { perlin1D } from './utils/perlin';
+import { useZones } from './types/zones';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import MarkdownViewer from './MarkdownViewer';
 
-const CANVAS_WIDTH = 700;
-const CANVAS_HEIGHT = 500;
-const MAX_POINTS = 10;
-const ARM_BASE = { x: 50, y: CANVAS_HEIGHT / 2 };
-const LIMB_LENGTHS: [number, number] = [250, 250];
+import { CurrentTaskDisplay } from './components/CurrentTaskDisplay';
+import { InstructionPanel } from './components/InstructionPanel';
+import { ProgressBar } from './components/ProgressBar';
 
-type Zone = {
-  id: number;
-  x: number;
-  y: number;
-  radius: number;
-};
+import {
+  CANVAS_WIDTH,
+  CANVAS_HEIGHT,
+  MAX_POINTS,
+  ARM_BASE,
+  LIMB_LENGTHS,
+} from './config/constants';
 
 
 export default function App() {
   // State for path key points
+  const [devMenuOpen, setDevMenuOpen] = useState(false);
+  //const [hasAccess, setHasAccess] = useState(false);
+  const [totalDuration, setTotalDuration] = useState(5);
+
+  const [taskList, setTaskList] = useState<string[]>([]);
+  const [currentTaskIndex, setCurrentTaskIndex] = useState(0);
+
   const [pathPoints, setPathPoints] = useState<Point[]>([
     ARM_BASE,
     { x: 500, y: CANVAS_HEIGHT / 2 },
   ]);
 
-  const [zones, setZones] = React.useState<Zone[]>([
-    { id: 1, x: 300, y: CANVAS_HEIGHT / 2, radius: 40 },
-  ]);
+  // ZONE STUFF
+  const [robotTip, setRobotTip] = useState<Point>(pathPoints[0]);
 
-  // Function to add a new zone
-  function addZone() {
-    setZones(zones => [
-      ...zones,
-      { id: Date.now(), x: 200, y: CANVAS_HEIGHT / 2, radius: 40 },
-    ]);
-  }
+  const { zones, setZones, addZone, clearZones } = useZones(CANVAS_HEIGHT / 2);
+
 
   // Curvature tension controls Catmull-Rom spline tightness (0 = tight, 1 = loose)
   //const [curvatureTension, setCurvatureTension] = useState(0.5);
@@ -46,6 +50,11 @@ export default function App() {
   const [curvatureGraph, setCurvatureGraph] = useState<Point[]>(() =>
     pathPoints.map((_, i) => ({ x: i / (pathPoints.length - 1 || 1), y: 0.5 }))
   );
+
+  useEffect(() => {
+    document.body.classList.toggle('dev-menu-open', devMenuOpen);
+  }, [devMenuOpen]);
+
 
   useEffect(() => {
     function syncGraph(graph: Point[], setter: React.Dispatch<React.SetStateAction<Point[]>>) {
@@ -157,6 +166,9 @@ export default function App() {
 
       const noisyTarget = { x: interpX + noiseOffsetX, y: interpY + noiseOffsetY };
 
+      setRobotTip(noisyTarget); // Track real-time robot position
+
+
       // Solve IK for noisy target & update angles
       arm.solveIK(noisyTarget);
       setAngles([...arm.angles]);
@@ -171,6 +183,25 @@ export default function App() {
     animationRef.current = requestAnimationFrame(step);
   }
 
+  useEffect(() => {
+    setZones(zones =>
+      zones.map(zone => {
+        if (zone.type === 'required' && !zone.visited) {
+          const dx = robotTip.x - zone.x;
+          const dy = robotTip.y - zone.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          const inside = dist <= zone.radius;
+          if (inside) {
+            return { ...zone, visited: true };
+          }
+        }
+
+        return zone;
+      })
+    );
+  }, [robotTip]);
+
+
   // Cleanup animation frame on unmount
   useEffect(() => {
     return () => {
@@ -181,120 +212,102 @@ export default function App() {
   }, []);
 
   return (
-    <>
-      <div style={{ display: 'flex', gap: 20, padding: 20 }}>
-        <CanvasStage
-          width={CANVAS_WIDTH}
-          height={CANVAS_HEIGHT}
-          pathPoints={pathPoints}
-          setPathPoints={setPathPoints}
-          arm={arm}
-          angles={angles}
-          setAngles={setAngles}
-          maxPoints={MAX_POINTS}
-          zones={zones}
-          setZones={setZones}
-          curvatureGraph={curvatureGraph}
-        />
+    <Router>
+      <Routes>
+        <Route path="/robotarmsim/" element={
+          <div id="root">
+            <div className="app-container" id="mainContent">
+              <div className="main-container" id="main-container">
+                <h1>Main App Content</h1>
+                <div id="main-items">
+                  <CanvasStage
+                    width={CANVAS_WIDTH}
+                    height={CANVAS_HEIGHT}
+                    pathPoints={pathPoints}
+                    setPathPoints={setPathPoints}
+                    arm={arm}
+                    angles={angles}
+                    setAngles={setAngles}
+                    maxPoints={MAX_POINTS}
+                    zones={zones}
+                    setZones={setZones}
+                    curvatureGraph={curvatureGraph}
+                  />
+                  <div id="user-controls">
+                    <GraphEditorPanel
+                      label="Tension"
+                      graphPoints={curvatureGraph}
+                      setGraphPoints={setCurvatureGraph}
+                      pathPoints={pathPoints}
+                    />
+                    <GraphEditorPanel
+                      label="Speed"
+                      graphPoints={speedGraph}
+                      setGraphPoints={setSpeedGraph}
+                      pathPoints={pathPoints}
+                    />
+                    <GraphEditorPanel
+                      label="Randomness"
+                      graphPoints={noiseGraph}
+                      setGraphPoints={setNoiseGraph}
+                      pathPoints={pathPoints}
+                    />
+                    <PlayButton onClick={handlePlay} />
+                    <button
+                      id="dev-open"
+                      onClick={() => setDevMenuOpen(!devMenuOpen)}
+                    >
+                      {devMenuOpen ? 'Close Dev Menu' : 'Open Dev Menu'}
+                    </button>
 
-        <div style={{ width: 220, userSelect: 'none' }}>
-          {/* <label>
-          Curvature Tension: {curvatureTension.toFixed(2)}
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={curvatureTension}
-            onChange={(e) => setCurvatureTension(parseFloat(e.target.value))}
-            style={{ width: '100%' }}
-          />
-        </label> */}
+                    <InstructionPanel
+                    />
 
-          <button onClick={addZone} style={{ position: 'absolute', top: 8, right: 8, backgroundColor: '#ff000090', color: 'white', fontWeight: 'bold', cursor: 'pointer' }}>
-            + Add Avoid Zone
-          </button>
+                    <CurrentTaskDisplay
+                      task={taskList[currentTaskIndex] || null}
+                      index={currentTaskIndex}
+                      total={taskList.length}
+                    />
 
+                    <ProgressBar
+                      current={currentTaskIndex + 1}
+                      total={taskList.length}
+                    />
 
-          <GraphEditorPanel
-            label="Tension"
-            graphPoints={curvatureGraph}
-            setGraphPoints={setCurvatureGraph}
-            pathPoints={pathPoints}
-          />
-
-          <GraphEditorPanel
-            label="Speed"
-            graphPoints={speedGraph}
-            setGraphPoints={setSpeedGraph}
-            pathPoints={pathPoints}
-          />
-          <GraphEditorPanel
-            label="Randomness"
-            graphPoints={noiseGraph}
-            setGraphPoints={setNoiseGraph}
-            pathPoints={pathPoints}
-          />
-          <PlayButton onClick={handlePlay} />
-
-        </div>
-
-        {/* Placeholder Dev Menu
-        <div style={{
-          width: 180,
-          backgroundColor: '#f0f0f0',
-          border: '1px solid #ccc',
-          borderRadius: 6,
-          padding: 12,
-          userSelect: 'none',
-          fontSize: 14,
-          color: '#333',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 12,
-          height: CANVAS_HEIGHT,
-          boxShadow: '0 0 6px rgba(0,0,0,0.1)',
-        }}>
-          <h3 style={{ margin: 0, fontSize: 18, textAlign: 'center' }}>Dev Menu</h3>
-          <label>
-            <input type="checkbox" disabled /> Placeholder Option 1
-          </label>
-          <label>
-            <input type="checkbox" disabled /> Placeholder Option 2
-          </label>
-          <button disabled style={{ marginTop: 'auto' }}>Dummy Button</button>
-        </div> */}
-
-        {/* Overlay placeholders */}
-        <div style={{
-          position: 'absolute',
-          top: 8,
-          left: 8,
-          color: 'rgba(0,0,0,0.4)',
-          fontSize: 14,
-          fontStyle: 'italic',
-          maxWidth: 200,
-          userSelect: 'none',
-          pointerEvents: 'none',
-        }}>
-          <b>Task Prompt: Carefree (PLACEHOLDER)</b><br />
-        </div>
-
-        <div style={{
-          position: 'absolute',
-          bottom: 8,
-          right: 8,
-          color: 'rgba(0,0,0,0.4)',
-          fontSize: 14,
-          fontStyle: 'italic',
-          maxWidth: 220,
-          textAlign: 'right',
-          userSelect: 'none',
-          pointerEvents: 'none',
-        }}>
-          <b>Instructions: (EXAMPLE)</b><br />
-        </div>
-      </div >
-    </>
+                  </div>
+                </div>
+              </div>
+              {/* Dev Menu overlay */}
+              <DevMenu
+                isOpen={devMenuOpen}
+                toggleOpen={() => setDevMenuOpen(!devMenuOpen)}
+                onClose={() => setDevMenuOpen(false)}
+                onDone={() => {
+                  console.log('[DevMenu] Done clicked');
+                  setDevMenuOpen(false);
+                }}
+                toggleRoboticLook={(enabled) => {
+                  console.log('Robotic Look:', enabled);
+                }}
+                totalDuration={totalDuration}
+                setTotalDuration={setTotalDuration}
+                onTasksLoaded={(tasks) => {
+                  console.log('App received tasks from DevMenu:', tasks);
+                  setTaskList(tasks);
+                  setCurrentTaskIndex(0);
+                }}
+                addAvoidZone={() => addZone('avoid')}
+                addRequiredZone={() => addZone('required')}
+                clearZones={clearZones}
+              />
+            </div>
+          </div>
+        } />
+        {/* Markdown Viewer */}
+        <Route path="/asset-help" element={
+          <MarkdownViewer filePath="AssetHelp.markdown" />
+        } />
+      </Routes>
+    </Router>
   );
 }

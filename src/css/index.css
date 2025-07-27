@@ -1,0 +1,379 @@
+/* === Tailwind Base === */
+/* @tailwind base;
+@tailwind components;
+@tailwind utilities; */
+
+/* === Global Defaults === */
+:root {
+  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color-scheme: light dark;
+  color: rgba(52, 52, 52, 0.87);
+  background-color: #242424;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  --my-gray: rgb(212, 212, 212);
+  --my-lele-gray: #1e1e1e;
+  --my-mid-gray: #3a3a3a;
+  --my-white: #ffff;
+  --my-osu-orange: #D73F09;
+
+  /* to change later: */
+  --my-deep-prime: deeppink;
+  --my-main-prime: hotpink;
+
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+  background: var(--my-white);
+}
+
+
+canvas {
+  background: var(--my-gray);
+
+}
+
+.canvas-stage {
+  width: auto;
+  height: auto;
+  /* default -> set inline*/
+  border: 1px solid black;
+  touch-action: none;
+  user-select: none;
+  cursor: default;
+  /* default cursor */
+}
+
+.canvas-stage.resizing {
+  cursor: nwse-resize;
+  /* cursor when resizing */
+}
+
+/* === App Container === */
+#root {
+  height: 100vh;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+  position: relative;
+}
+
+/* === Main Content === */
+#mainContent {
+  height: 100%;
+  overflow: auto;
+  background: var(--my-mid-gray);
+  color: var(--my-white);
+  transition: filter 0.3s ease;
+}
+
+#main-items {
+  display: flex;
+  gap: 20px;
+  padding: 20px;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+#user-controls {
+  width: 220;
+  user-select: none;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* === Dev Menu Slide-In Panel === */
+.dev-menu-container {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 100%;
+  width: 40%;
+  max-width: 500px;
+  background-color: var(--my-lele-gray);
+  color: var(--my-white);
+  box-shadow: -2px 0 10px rgba(0, 0, 0, 0.2);
+  transform: translateX(100%);
+  transition: transform 0.3s ease-in-out;
+  z-index: 1000;
+  padding: 1rem;
+  overflow-y: auto;
+}
+
+.dev-menu-container.open {
+  transform: translateX(0%);
+}
+
+/* Optional: background blur */
+/* body.dev-menu-open #mainContent {
+  filter: blur(2px);
+} */
+
+/* === Close Button === */
+.close-button,
+#closeDevMenu {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  background: var(--my-osu-orange);
+  color: var(--my-white);
+  border: none;
+  padding: 0.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 1rem;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  z-index: 1300;
+}
+
+/* === Dev Menu Form Elements === */
+.dev-menu-container label {
+  display: block;
+  margin-top: 1rem;
+  font-weight: 600;
+  color: #ddd;
+}
+
+.dev-menu-container input[type="checkbox"] {
+  margin-right: 0.5rem;
+  cursor: pointer;
+}
+
+.dev-menu-container input[type="number"],
+.dev-menu-container input[type="text"] {
+  width: 100%;
+  padding: 0.3rem 0.5rem;
+  border-radius: 4px;
+  border: none;
+  margin-top: 0.2rem;
+  box-sizing: border-box;
+}
+
+.dev-menu-container button {
+  margin-top: 1rem;
+  background-color: var(--my-osu-orange);
+  color: var(--my-white);
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  cursor: pointer;
+  box-shadow: 0 2px 4px rgba(215, 63, 9, 0.7);
+  transition: background-color 0.3s ease;
+}
+
+.dev-menu-container button:hover {
+  background-color: #b03508;
+}
+
+/* === Dev Menu Headings === */
+.dev-h1 {
+  color: var(--my-white);
+  text-align: center;
+  font-size: 20pt;
+  margin-bottom: 1rem;
+}
+
+.dev-h2 {
+  color: var(--my-white);
+  font-size: 16pt;
+  margin: 1rem 0 0.5rem;
+}
+
+.dev-h3 {
+  color: var(--my-white);
+  font-size: 14pt;
+  margin: 0.5rem 0;
+}
+
+/* === Dev Menu Open Button === */
+#dev-open {
+  position: fixed;
+  bottom: 10px;
+  right: 10px;
+  z-index: 1100;
+  background: var(--my-osu-orange);
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 1rem;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  visibility: visible;
+  margin-top: auto;
+}
+
+.dev-menu-open #dev-open {
+  visibility: hidden;
+}
+
+/* === Light Mode Overrides === */
+@media (prefers-color-scheme: light) {
+  :root {
+    color: #213547;
+    background-color: var(--my-white);
+  }
+
+  a:hover {
+    color: #747bff;
+  }
+
+  button {
+    background-color: #f9f9f9;
+  }
+}
+
+/* === CSV Menu === */
+#csvMenuComponents {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+#csvMenuComponents h3 {
+  margin-bottom: 0.5rem;
+}
+
+.csvComponents {
+  flex: 1;
+}
+
+.noBullets {
+  list-style-type: none;
+  margin: 0;
+  padding: 0;
+}
+
+.noBullets li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.noBullets label {
+  line-height: 1;
+}
+
+.noBullets input[type="checkbox"] {
+  width: 1rem;
+  height: 1rem;
+}
+
+/* CSV Preview + Options */
+#csvOptions,
+#csvPreview {
+  padding: 0.5rem;
+  border-radius: 8px;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.1);
+  flex: 1 1 0;
+  min-width: 50px;
+  max-width: 100%;
+  max-height: 8.5em;
+  min-height: 8.5em;
+}
+
+#csvOptions {
+  background-color: var(--my-osu-orange);
+  color: var(--my-white);
+  min-width: 120px;
+}
+
+#csvPreview {
+  background-color: rgb(105, 105, 105);
+  overflow-x: auto;
+}
+
+#csvPreview::-webkit-scrollbar {
+  width: 8px;
+}
+
+#csvPreview::-webkit-scrollbar-thumb {
+  background-color: #bbb;
+  border-radius: 4px;
+}
+
+/* CSV Table */
+#csvTable {
+  border-collapse: collapse;
+  width: 100%;
+  font-family: monospace;
+  background-color: #444444;
+  color: black;
+  border-radius: 4px;
+}
+
+#csvTable td {
+  border: 1px solid #ddd;
+  padding: 6px 12px;
+  min-width: 80px;
+  text-align: left;
+  background-color: #fefefe;
+}
+
+#csvTable tr:nth-child(even) td {
+  background-color: #f9f9f9;
+}
+
+#csvTable tr:hover td {
+  background-color: #e6f7ff;
+}
+
+#csvTable td:empty::after {
+  content: '-';
+  color: #ccc;
+}
+
+/* == FOR GRAPH EDITOR PANEL == */
+
+.svg-container {
+  margin-bottom: 12px;
+  /* Margin for the container */
+}
+
+.svg-element {
+  border: 1px solid #ccc;
+  background: #fafafa;
+  touch-action: none;
+  user-select: none;
+  display: block;
+}
+
+.shape {
+  fill: var(--my-deep-prime);
+  cursor: pointer;
+  size: 10;
+}
+
+.circle {
+  stroke: white;
+  cursor: pointer;
+  stroke-width: 1px;
+}
+
+.triangle-fill {
+  fill: var(--my-deep-prime);
+  cursor: pointer;
+}
+
+.polyline {
+  fill: none;
+  stroke: var(--my-main-prime);
+  stroke-width: 2px;
+}
