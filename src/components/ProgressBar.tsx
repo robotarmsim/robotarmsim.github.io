@@ -1,4 +1,6 @@
 // ProgressBar.tsx
+
+//OBSOLETE NOW 
 import React from 'react';
 
 interface ProgressBarProps {

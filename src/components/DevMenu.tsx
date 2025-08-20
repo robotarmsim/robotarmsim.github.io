@@ -1,198 +1,223 @@
 // /src/components/DevMenu.tsx
-import React, { useState } from 'react';
-import { CSVPreviewer } from './CSVPreviewer';
+import React, { useState, useEffect } from 'react';
 import CSVLoader from './CSVLoader';
-//import MarkdownViewer from '../MarkdownViewer';
+import { CSVPreviewer } from './CSVPreviewer';
+import CSVOptions from './CSVOptions';
+import { shuffle, insertInterruptions } from '../utils/csvUtils';
+
+import { Link } from 'react-router-dom';
+
+import type { MotionLogEntry, SessionLog } from '../hooks/useTrackingLogs';
+import type { Zone } from '../types/zones';
 
 import '../css/index.css';
 
-
-
 interface DevMenuProps {
     isOpen: boolean;
-    toggleOpen: () => void;
     onClose: () => void;
     onDone: () => void;
     toggleRoboticLook: (enabled: boolean) => void;
-
     totalDuration: number;
     setTotalDuration: (t: number) => void;
     onTasksLoaded: (tasks: string[]) => void;
     addAvoidZone: () => void;
     addRequiredZone: () => void;
     clearZones: () => void;
-
+    setShowProgress?: (enabled: boolean) => void;
+    totalTasks: number;
+    saveMotionLog: () => void;
+    saveSessionLog: () => void;
+    loadMotionLog: (onLoaded?: (data: MotionLogEntry[]) => void) => void;
+    loadSessionLog: (onLoaded?: (data: SessionLog) => void) => void;
+    replayMotion: (data: MotionLogEntry[]) => void;
+    setZones: React.Dispatch<React.SetStateAction<Zone[]>>;
 }
 
 const DevMenu: React.FC<DevMenuProps> = ({
     isOpen,
-    //toggleOpen,
     onClose,
     onDone,
-    toggleRoboticLook,
+    //toggleRoboticLook,
     totalDuration,
     setTotalDuration,
     onTasksLoaded,
     addAvoidZone,
     addRequiredZone,
-    clearZones
+    clearZones,
+    setShowProgress = () => { },
+    //totalTasks,
+    saveMotionLog,
+    saveSessionLog,
+    loadMotionLog,
+    loadSessionLog,
+    replayMotion,
+    setZones,
 }) => {
-    //const [hasAccess, setHasAccess] = React.useState(false);
-    const [roboticLook, setRoboticLook] = React.useState(false);
-    const [csvRows, setCsvRows] = useState<string[][]>([]); // Shared CSV state
-    const [showMarkdown, setShowMarkdown] = useState(false); // State to toggle 
-    //const correctPassword = '1';
+    // raw task list and preview rows
+    const [rawTasks, setRawTasks] = useState<string[]>([]);
+    const [csvRows, setCsvRows] = useState<string[][]>([]);
+
+    // CSV options state
+    const [randomOrder, setRandomOrder] = useState(false);
+    const [interruptionEnabled, setInterruptionEnabled] = useState(false);
+    const [interruptionInterval, setInterruptionInterval] = useState(1);
+    const [showProgressLocal, setShowProgressLocal] = useState(false);
+    const [selectedPreset, setSelectedPreset] = useState<string | null>(null);
+
+    // whenever rawTasks or options change, recompute rows and notify parent
+    useEffect(() => {
+        let tasks = [...rawTasks];
+        if (randomOrder) tasks = shuffle(tasks);
+        if (interruptionEnabled) tasks = insertInterruptions(tasks, interruptionInterval);
+
+        setCsvRows(tasks.map(t => [t]));
+        onTasksLoaded(tasks);
+    }, [rawTasks, randomOrder, interruptionEnabled, interruptionInterval]);
+
+    // propagate showProgress toggles externally
+    useEffect(() => {
+        console.log('DevMenu toggled showProgress ', showProgressLocal);
+        if (typeof setShowProgress === 'function') {
+            setShowProgress(showProgressLocal);
+        }
+    }, [showProgressLocal, setShowProgress]);
+
+    const handleLoadPreset = async () => {
+        if (!selectedPreset) return;
+        const response = await fetch(`/presets/${selectedPreset}`);
+        const text = await response.text();
+        const lines = text
+            .split('\n')
+            .map(l => l.trim())
+            .filter(l => l.length > 0);
+        setRawTasks(lines.map(l => l.split(',')[0].trim()));
+    };
 
     return (
-        <>
+        <div className={`dev-menu-container ${isOpen ? 'open' : ''}`}>
+            <button className="close-button" onClick={onClose}>×</button>
+            <h2>Developer Menu</h2>
 
+            {/* Operator Controls */}
+            <section id="dev-functional">
+                <h3>Operator Controls</h3>
+                <label htmlFor="totalDuration">Total Duration (s):</label>
+                <input
+                    id="totalDuration"
+                    type="number"
+                    value={totalDuration}
+                    step="0.1"
+                    onChange={e => setTotalDuration(Number(e.target.value))}
+                />
+            </section>
 
-            <div className={`dev-menu-container ${isOpen ? 'open' : ''}`}>
-                <button className="close-button" onClick={onClose}>×</button>
-                <h2>Developer Menu</h2>
-                <h1 className="dev-h1">Operator Controls</h1>
+            {/* CSV Section */}
+            <section id="dev-csv">
+                <h3>Set Feature List</h3>
+                <CSVLoader onData={setRawTasks} />
 
-                <div id="dev-functional">
-                    {/* <button id="addSegmentBtn">Add Segment</button> */}
-
-                    <label htmlFor="totalDuration">Total Duration (s):</label>
-                    <input
-                        className="functional-controls"
-                        id="totalDuration"
-                        type="number"
-                        value={totalDuration}
-                        step="0.1"
-                        onChange={(e) => setTotalDuration(Number(e.target.value))} /*readOnly*/
-                    />
-
-                    {/*
-                        <label htmlFor="toggleRoboticLook">Enable Robotic Look</label>
-                        <input type="checkbox" id="toggleRoboticLook" />
-                        */}
-
+                <div className="csv-presets">
+                    <label>Choose from Presets:</label>
+                    <select
+                        value={selectedPreset || ''}
+                        onChange={e => setSelectedPreset(e.target.value)}
+                    >
+                        <option value="">-- Select Preset --</option>
+                        <option value="preset-1-laban.csv">Laban</option>
+                        <option value="preset-2-demo.csv">Demo</option>
+                    </select>
+                    <button onClick={handleLoadPreset}>Load Preset</button>
                 </div>
 
+                <CSVOptions
+                    randomOrder={randomOrder}
+                    setRandomOrder={setRandomOrder}
+                    showProgress={showProgressLocal}
+                    setShowProgress={setShowProgressLocal}
+                    interruptionEnabled={interruptionEnabled}
+                    setInterruptionEnabled={setInterruptionEnabled}
+                    interruptionInterval={interruptionInterval}
+                    setInterruptionInterval={setInterruptionInterval}
+                />
 
-                <section id="dev-csv-load">
-                    <h2 className="dev-h2">Load Feature List</h2>
-                    {/* <p>Accepted formats: .csv</p> */}
+                <div className="csv-preview-section">
+                    <h3 className="dev-h3">Preview</h3>
+                    <CSVPreviewer rows={csvRows} hasHeader={false} />
+                </div>
+            </section>
 
-                    {/* <label htmlFor="csvInput">Select CSV File:</label> */}
-                    {/* <input type="file" id="csvInput" accept=".csv" onChange={handleCSVInput} /> */}
-
-                    <CSVLoader
-                        testFlowManager={{
-                            loadTasks: (tasks) => {
-                                const rows = tasks.map(row => [row]);
-                                setCsvRows(rows);
-                                if (onTasksLoaded) onTasksLoaded(tasks);
-                            },
-                        }}
-                    />
-
-                    <div id="csvMenuComponents">
-                        <section className="csvComponents">
-                            <h3 className="dev-h3">Preview</h3> {/*//THIS IS THE CSV PREVIEWER! */}
-                            <CSVPreviewer rows={csvRows} />
-                        </section>
-
-                        <section className="csvComponents">
-                            <h3 className="dev-h3">Options</h3>
-                            <div id="csvOptions">
-                                <ul className="noBullets">
-                                    <li>
-                                        <label>
-                                            <input type="checkbox" id="CSVshuffleOrder" />
-                                            Random Order
-                                        </label>
-                                    </li>
-                                    <li>
-                                        <label>
-                                            <input type="checkbox" id="CSVinterruption" />
-                                            Add interuptions in between
-                                        </label>
-                                    </li>
-                                    <li>
-                                        <label>
-                                            <input type="checkbox" id="CSVshowProgress" />
-                                            Show Progress
-                                        </label>
-
-                                    </li>
-                                </ul>
-                            </div>
-                        </section>
-                    </div>
-
-                    <button id="loadCsvBtn">Save</button>
-
-                    <section id="dev-int-assets">
-                        <h2 className="dev-h2">Interactive Assets</h2>
-                        <label htmlFor="assetInput">Load saved asset design</label>
-                        <input type="file" id="assetInput" accept=".json" />
-
-                        <div className={`dev-menu ${isOpen ? 'open' : ''}`}>
-                            <h2>Dev Menu</h2>
-                            <button onClick={addAvoidZone}>Add Avoid Zone (Red)</button>
-                            <button onClick={addRequiredZone}>Add Required Zone (Green)</button>
-                            <button onClick={clearZones}>Clear All Zones</button>
-                            <button onClick={onClose}>Close</button>
-                        </div>
-
-                        <button id="toggleAssetEditor">Open Asset Toolbar</button>
-                        <a href="AssetHelp.markdown" target="_blank">Asset help and Info</a>
-
-                        <button onClick={() => setShowMarkdown(!showMarkdown)}>
-                            {showMarkdown ? 'Hide' : 'Show'} Asset Help and Info
-                        </button>
-
-                        <a
-                            href="/asset-help"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                        >
-                            Open Asset Help
-                        </a>
-
-                        <div id="UserObjective">
-                            <label htmlFor="userObj">Edit User Objective</label>
-                            <input type="text" id="userObj" placeholder="Example: ''Approach the marked point''" />
-                            <button id="saveObjBtn">Save Objective</button>
-
-                        </div>
-                    </section>
-                </section>
-
-                <section id="dev-data-logs">
-                    <h2 className="dev-h2">Data Logs</h2>
-                    <p>Note: motion set will be from current local device. Online user designs to be stored elsewhere.</p>
-                    {/* BTW: WHERE IS THAT GOING TO BE STORED??? TBD. */}
-                    <ul>
-                        <li><button id="downloadAllBtn">Download individual motion set</button></li>
-                        <li><button id="downloadObj_Asset">Download asset and objective log </button></li>
-                    </ul>
-                </section>
-
-                <label>
+            {/* Interactive Assets */}
+            <section id="dev-int-assets">
+                <h3>Interactive Assets</h3>
+                <div className="zone-buttons">
+                    <button onClick={addAvoidZone}>Add Avoid Zone (Red)</button>
+                    <button onClick={addRequiredZone}>Add Required Zone (Green)</button>
+                    <button onClick={clearZones}>Clear All Zones</button>
+                </div>
+                <Link to="/asset-help" className="asset-help-link">
+                    Open Asset Help
+                </Link>
+                {/* <div id="UserObjective">
+                    <label htmlFor="userObj">Edit User Objective</label>
                     <input
-                        type="checkbox"
-                        checked={roboticLook}
-                        onChange={(e) => {
-                            setRoboticLook(e.target.checked);
-                            toggleRoboticLook(e.target.checked);
-                        }}
+                        type="text"
+                        id="userObj"
+                        placeholder="This Does Nothing Right Now"
                     />
-                    Enable Robotic Look
-                </label>
+                    <button id="saveObjBtn">Save Objective</button>
+                </div> */}
+            </section>
+
+            {/* Data Logs */}
+            <section id="dev-data-logs">
+                <h3>Data Logs</h3>
+                <ul>
+                    <li>
+                        <a
+                            href="#"
+                            onClick={e => { e.preventDefault(); saveMotionLog(); }}
+                        >
+                            Save Motion Data
+                        </a>
+                    </li>
+                    <li>
+                        <a
+                            href="#"
+                            onClick={e => { e.preventDefault(); saveSessionLog(); }}
+                        >
+                            Save Session Data
+                        </a>
+                    </li>
+                    <li>
+                        <a
+                            href="#"
+                            onClick={e => {
+                                e.preventDefault();
+                                loadMotionLog(data => replayMotion(data));
+                            }}
+                        >
+                            Load & Replay Motion Data
+                        </a>
+                    </li>
+                    <li>
+                        <a
+                            href="#"
+                            onClick={e => {
+                                e.preventDefault();
+                                loadSessionLog(data => data?.zones && setZones(data.zones));
+                            }}
+                        >
+                            Load Session Data
+                        </a>
+                    </li>
+                </ul>
+            </section>
 
 
-                <button id="assetDoneBtn">Done Editing</button>
-
-                <button onClick={onDone}>Done</button>
-            </div>
-        </>
+            {/* Done */}
+            <button onClick={onDone}>Done</button>
+        </div>
     );
 };
-
 
 export default DevMenu;

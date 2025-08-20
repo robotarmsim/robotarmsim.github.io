@@ -12,7 +12,8 @@ export type Zone = {
 
 export function useZones(initialY: number) {
   const [zones, setZones] = useState<Zone[]>([
-    { id: 1, x: 300, y: initialY, radius: 40, type: 'avoid' },
+    // { id: 1, x: 200, y: initialY, radius: 40, type: 'avoid' },
+    // NO INITIAL ZONE !!
   ]);
 
   function addZone(type: 'avoid' | 'required' = 'avoid') {

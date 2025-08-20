@@ -3,12 +3,13 @@
 
 interface PlayButtonProps {
   onClick: () => void;
+  id?: string;
   disabled?: boolean;
 }
 
-export function PlayButton({ onClick, disabled }: PlayButtonProps) {
+export function PlayButton({ onClick, id, disabled }: PlayButtonProps) {
   return (
-    <button onClick={onClick} disabled={disabled} style={{ padding: '8px 16px', fontSize: 16 }}>
+    <button onClick={onClick} id={id} disabled={disabled}>
       Play
     </button>
   );

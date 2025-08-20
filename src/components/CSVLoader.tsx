@@ -1,79 +1,34 @@
-// import React from 'react';
-import { useRef, useState } from 'react';
+import React from 'react';
+import { parseCSVText } from '../utils/csvUtils';
 
 interface CSVLoaderProps {
-  testFlowManager: {
-    loadTasks: (tasks: string[]) => void;
-  };
-  onTasksLoaded?: () => void;
-  // hideUI?: boolean; // new thing to get rid of randomize and shit.
+  /** called immediately with an array of raw tasks (first column of each row) */
+  onData: (tasks: string[]) => void;
 }
 
-export default function CSVLoader({ testFlowManager, onTasksLoaded }: CSVLoaderProps) {
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [shuffleOrder, setShuffleOrder] = useState(false);
-  const [disabled, setDisabled] = useState(false);
+export default function CSVLoader({ onData }: CSVLoaderProps) {
+  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-  function parseCSV(text: string): string[] {
-    return text
-      .split('\n')
-      .map(line => line.trim())
-      .filter(line => line.length > 0);
-  }
-
-  function shuffle(arr: string[]): string[] {
-    return arr
-      .map(v => ({ v, sort: Math.random() }))
-      .sort((a, b) => a.sort - b.sort)
-      .map(({ v }) => v);
-  }
-
-  const handleFile = () => {
-    const input = fileInputRef.current;
-    if (!input || !input.files || input.files.length === 0) {
-      alert('Please select a CSV file.');
-      return;
-    }
-    const file = input.files[0];
     const reader = new FileReader();
-
-    reader.onload = e => {
-      const rawText = e.target?.result;
-      if (typeof rawText !== 'string') return;
-
-      let tasks = parseCSV(rawText);
-      if (shuffleOrder) tasks = shuffle(tasks);
-
-      testFlowManager.loadTasks(tasks);
-      if (onTasksLoaded) onTasksLoaded();
-
-      setDisabled(true);
+    reader.onload = ev => {
+      const text = ev.target?.result;
+      if (typeof text !== 'string') return;
+      onData(parseCSVText(text));
     };
-
     reader.readAsText(file);
   };
 
   return (
-    <div>
+    <div className="csv-loader">
+      <label>Load CSV:</label>
       <input
         type="file"
         accept=".csv"
-        ref={fileInputRef}
-        disabled={disabled}
+        onChange={handleFile}
+        style={{ marginLeft: 8 }}
       />
-      <label>
-        <input
-          type="checkbox"
-          checked={shuffleOrder}
-          disabled={disabled}
-          onChange={e => setShuffleOrder(e.target.checked)}
-        />
-        Random Order
-      </label>
-     
-      <button onClick={handleFile} disabled={disabled}>
-        Load CSV
-      </button>
     </div>
   );
 }

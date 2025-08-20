@@ -4,6 +4,7 @@ import { type Point } from '../utils/RobotArm';
 import Triangle from './Triangle.tsx';
 
 interface GraphEditorPanelProps {
+    id: string;
     label: string;
     graphPoints: Point[];
     setGraphPoints: React.Dispatch<React.SetStateAction<Point[]>>;
@@ -84,7 +85,7 @@ export function GraphEditorPanel({ label, graphPoints, setGraphPoints, pathPoint
                 style={svgStyle}
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
-                onPointerLeave={handlePointerUp}
+                //onPointerLeave={handlePointerUp}
             >
                 {/* Draw lines between points */}
                 <polyline

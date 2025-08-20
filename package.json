@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "homepage": "https://robotarmsim.github.io",
+  "homepage": ".",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -11,10 +11,11 @@
     "preview": "vite preview",
     "predeploy": "npm run build",
     "postbuild": "cpy dist/index.html dist/404.html",
-    "deploy": "npm run build && gh-pages -d dist"
+    "deploy": "gh-pages -d dist"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.11",
+    "lucide-react": "^0.539.0",
     "noisejs": "^2.1.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
@@ -24,6 +25,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.30.1",
+    "@types/node": "^24.2.1",
     "@types/noisejs": "^2.1.0",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",

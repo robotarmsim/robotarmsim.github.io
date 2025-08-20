@@ -1,8 +1,3 @@
-/* === Tailwind Base === */
-/* @tailwind base;
-@tailwind components;
-@tailwind utilities; */
-
 /* === Global Defaults === */
 :root {
   font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
@@ -21,11 +16,8 @@
   --my-mid-gray: #3a3a3a;
   --my-white: #ffff;
   --my-osu-orange: #D73F09;
-
-  /* to change later: */
-  --my-deep-prime: deeppink;
-  --my-main-prime: hotpink;
-
+  --my-deep-prime: darkblue;
+  --my-main-prime: blue;
 }
 
 html,
@@ -37,40 +29,44 @@ body {
 }
 
 body {
-  margin: 0;
   font-family: system-ui, sans-serif;
   background: var(--my-white);
 }
 
-
 canvas {
   background: var(--my-gray);
-
 }
 
+/* === Canvas Stage === */
 .canvas-stage {
   width: auto;
   height: auto;
-  /* default -> set inline*/
   border: 1px solid black;
   touch-action: none;
   user-select: none;
   cursor: default;
-  /* default cursor */
+  flex: 1 1 auto;
+  max-width: 800px;
 }
-
 .canvas-stage.resizing {
   cursor: nwse-resize;
-  /* cursor when resizing */
 }
 
-/* === App Container === */
+/* === Root/App Container === */
 #root {
   height: 100vh;
   max-width: 100%;
   box-sizing: border-box;
   overflow: hidden;
   position: relative;
+}
+
+#appLayout {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100%;
+  overflow: hidden;
 }
 
 /* === Main Content === */
@@ -83,23 +79,85 @@ canvas {
 }
 
 #main-items {
+  flex: 1;
   display: flex;
-  gap: 20px;
-  padding: 20px;
-  height: 100%;
+  flex-direction: row;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 0.75rem; /* was 1.5rem */
+  padding: 1rem;
+  overflow: auto;
+  background: var(--my-mid-gray);
   box-sizing: border-box;
 }
 
+#main-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center; /* centers all child items horizontally */
+  gap: 1rem;
+}
+
+.user-buttons {
+  display: flex;
+  flex-direction: row !important;  /* side-by-side */
+  justify-content: center;
+  align-items: center;
+  gap: 1rem;            /* space between them */
+}
+
+/* Optional: make buttons uniform size */
+.user-buttons button {
+  min-width: 100px;
+  padding: 0.5rem 1rem;
+}
+
+#just-canvas,
 #user-controls {
-  width: 220;
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+  max-width: fit-content;
+}
+
+#user-controls {
   user-select: none;
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 1rem;
+  flex-shrink: 0;
+  min-width: 220px;
+  max-width: 300px;
+  padding: 0.5rem;
 }
 
-/* === Dev Menu Slide-In Panel === */
+/* === Task Header === */
+.task-header {
+  width: auto;
+  margin: 10px 20px 0 20px;
+  padding: 0.75rem 1.5rem;
+  background: #ffffff;
+  color: #242424;
+  font-weight: 600;
+  font-size: 1.05rem;
+  text-align: center;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  position: sticky;
+  top: 10px;
+  z-index: 10;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  line-height: 1.4;
+}
+.task-header.tutorial-highlight {
+  box-shadow: 0 0 0 4px rgba(255, 165, 0, 0.5);
+  transform: scale(1.02);
+}
+
+/* === Dev Menu Slide-In === */
 .dev-menu-container {
   position: fixed;
   top: 0;
@@ -116,17 +174,10 @@ canvas {
   padding: 1rem;
   overflow-y: auto;
 }
-
 .dev-menu-container.open {
   transform: translateX(0%);
 }
 
-/* Optional: background blur */
-/* body.dev-menu-open #mainContent {
-  filter: blur(2px);
-} */
-
-/* === Close Button === */
 .close-button,
 #closeDevMenu {
   position: absolute;
@@ -143,19 +194,17 @@ canvas {
   z-index: 1300;
 }
 
-/* === Dev Menu Form Elements === */
+/* === Dev Menu Form === */
 .dev-menu-container label {
   display: block;
   margin-top: 1rem;
   font-weight: 600;
   color: #ddd;
 }
-
 .dev-menu-container input[type="checkbox"] {
   margin-right: 0.5rem;
   cursor: pointer;
 }
-
 .dev-menu-container input[type="number"],
 .dev-menu-container input[type="text"] {
   width: 100%;
@@ -165,7 +214,6 @@ canvas {
   margin-top: 0.2rem;
   box-sizing: border-box;
 }
-
 .dev-menu-container button {
   margin-top: 1rem;
   background-color: var(--my-osu-orange);
@@ -177,30 +225,13 @@ canvas {
   box-shadow: 0 2px 4px rgba(215, 63, 9, 0.7);
   transition: background-color 0.3s ease;
 }
-
 .dev-menu-container button:hover {
   background-color: #b03508;
 }
 
-/* === Dev Menu Headings === */
-.dev-h1 {
-  color: var(--my-white);
-  text-align: center;
-  font-size: 20pt;
-  margin-bottom: 1rem;
-}
-
-.dev-h2 {
-  color: var(--my-white);
-  font-size: 16pt;
-  margin: 1rem 0 0.5rem;
-}
-
-.dev-h3 {
-  color: var(--my-white);
-  font-size: 14pt;
-  margin: 0.5rem 0;
-}
+.dev-h1 { color: var(--my-white); text-align: center; font-size: 20pt; margin-bottom: 1rem; }
+.dev-h2 { color: var(--my-white); font-size: 16pt; margin: 1rem 0 0.5rem; }
+.dev-h3 { color: var(--my-white); font-size: 14pt; margin: 0.5rem 0; }
 
 /* === Dev Menu Open Button === */
 #dev-open {
@@ -219,25 +250,8 @@ canvas {
   visibility: visible;
   margin-top: auto;
 }
-
 .dev-menu-open #dev-open {
   visibility: hidden;
-}
-
-/* === Light Mode Overrides === */
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: var(--my-white);
-  }
-
-  a:hover {
-    color: #747bff;
-  }
-
-  button {
-    background-color: #f9f9f9;
-  }
 }
 
 /* === CSV Menu === */
@@ -246,37 +260,13 @@ canvas {
   gap: 12px;
   align-items: flex-start;
 }
+#csvMenuComponents h3 { margin-bottom: 0.5rem; }
+.csvComponents { flex: 1; }
+.noBullets { list-style: none; margin: 0; padding: 0; }
+.noBullets li { display: flex; align-items: center; gap: 0.5rem; }
+.noBullets label { line-height: 1; }
+.noBullets input[type="checkbox"] { width: 1rem; height: 1rem; }
 
-#csvMenuComponents h3 {
-  margin-bottom: 0.5rem;
-}
-
-.csvComponents {
-  flex: 1;
-}
-
-.noBullets {
-  list-style-type: none;
-  margin: 0;
-  padding: 0;
-}
-
-.noBullets li {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.noBullets label {
-  line-height: 1;
-}
-
-.noBullets input[type="checkbox"] {
-  width: 1rem;
-  height: 1rem;
-}
-
-/* CSV Preview + Options */
 #csvOptions,
 #csvPreview {
   padding: 0.5rem;
@@ -288,37 +278,26 @@ canvas {
   max-height: 8.5em;
   min-height: 8.5em;
 }
-
 #csvOptions {
   background-color: var(--my-osu-orange);
   color: var(--my-white);
   min-width: 120px;
 }
-
 #csvPreview {
   background-color: rgb(105, 105, 105);
   overflow-x: auto;
 }
+#csvPreview::-webkit-scrollbar { width: 8px; }
+#csvPreview::-webkit-scrollbar-thumb { background-color: #bbb; border-radius: 4px; }
 
-#csvPreview::-webkit-scrollbar {
-  width: 8px;
-}
-
-#csvPreview::-webkit-scrollbar-thumb {
-  background-color: #bbb;
-  border-radius: 4px;
-}
-
-/* CSV Table */
 #csvTable {
   border-collapse: collapse;
   width: 100%;
   font-family: monospace;
-  background-color: #444444;
+  background-color: #444;
   color: black;
   border-radius: 4px;
 }
-
 #csvTable td {
   border: 1px solid #ddd;
   padding: 6px 12px;
@@ -326,27 +305,12 @@ canvas {
   text-align: left;
   background-color: #fefefe;
 }
+#csvTable tr:nth-child(even) td { background-color: #f9f9f9; }
+#csvTable tr:hover td { background-color: #e6f7ff; }
+#csvTable td:empty::after { content: '-'; color: #ccc; }
 
-#csvTable tr:nth-child(even) td {
-  background-color: #f9f9f9;
-}
-
-#csvTable tr:hover td {
-  background-color: #e6f7ff;
-}
-
-#csvTable td:empty::after {
-  content: '-';
-  color: #ccc;
-}
-
-/* == FOR GRAPH EDITOR PANEL == */
-
-.svg-container {
-  margin-bottom: 12px;
-  /* Margin for the container */
-}
-
+/* === Graph Editor Panel === */
+.svg-container { margin-bottom: 12px; }
 .svg-element {
   border: 1px solid #ccc;
   background: #fafafa;
@@ -354,26 +318,120 @@ canvas {
   user-select: none;
   display: block;
 }
-
-.shape {
-  fill: var(--my-deep-prime);
+.shape { fill: var(--my-deep-prime); cursor: pointer; }
+.circle { stroke: white; cursor: pointer; stroke-width: 1px; }
+.triangle-fill { fill: var(--my-deep-prime); cursor: pointer; }
+.polyline { fill: none; stroke: var(--my-main-prime); stroke-width: 2px; }
+.zoneButton {
+  padding: 0.5rem;
+  border-radius: 4px;
   cursor: pointer;
-  size: 10;
+  font-size: 1rem;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
-.circle {
-  stroke: white;
-  cursor: pointer;
-  stroke-width: 1px;
+/* === Light Mode === */
+@media (prefers-color-scheme: light) {
+  :root { color: #213547; background-color: var(--my-white); }
+  a:hover { color: #747bff; }
+  button { background-color: #f9f9f9; }
 }
 
-.triangle-fill {
-  fill: var(--my-deep-prime);
-  cursor: pointer;
+/* === Responsive === */
+@media (max-width: 768px) {
+  #main-items { flex-direction: column; padding: 0.5rem; }
+  #user-controls { width: 100%; max-width: 100%; }
+  .task-header { font-size: 1rem; padding: 0.75rem; }
 }
 
-.polyline {
-  fill: none;
-  stroke: var(--my-main-prime);
-  stroke-width: 2px;
+
+/* === WIKI === */
+.help-button {
+  position: fixed;
+  bottom: 1rem;
+  right: 1rem;
+  background: #FFD700;
+  border: none;
+  border-radius: 50%;
+  padding: 0.6rem;
+  cursor: pointer;
+  z-index: 10002;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+}
+
+.wiki-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10003;
+}
+
+.wiki-card {
+  background: white;
+  color: black;
+  padding: 1.5rem;
+  border-radius: 8px;
+  max-width: 500px;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.wiki-card h2 {
+  margin-top: 0;
+}
+
+.wiki-actions {
+  margin-top: 1rem;
+  display: flex;
+  gap: 1rem;
+}
+
+
+/* === Title screen overlay === */
+#title-screen {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: var(--my-mid-gray);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  z-index: 2000;
+  transition: transform 0.5s ease-in-out;
+}
+
+/* === slide-up hide animation === */
+#title-screen.hidden {
+  transform: translateY(-100%);
+}
+
+/* === "game" title hehe ===*/
+#title-screen h1 {
+  font-size: 3rem;
+  color: var(--my-white);
+  margin-bottom: 2rem;
+  text-align: center;
+}
+
+/* Start button */
+#title-screen button {
+  padding: 1rem 2rem;
+  font-size: 1.25rem;
+  background-color: var(--my-osu-orange);
+  color: var(--my-white);
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+  transition: background-color 0.3s ease;
+}
+
+#title-screen button:hover {
+  background-color: #b03508;
 }
