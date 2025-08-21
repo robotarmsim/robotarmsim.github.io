@@ -9,8 +9,11 @@ export interface TutorialStep {
   buttonText?: string;
   skipButton?: boolean;
   centered?: boolean;
+  hasChosenSize?: boolean;
+  hasProlific?: boolean;
 
   // tutorial-only hooks
-  shouldSkip?: (ctx: { hasChosenSize: boolean }) => boolean;
+  shouldSkip?: (ctx: { hasChosenSize?: boolean; hasProlific?: boolean }) => boolean;
   onSelect?: (value: string, setHasChosenSize?: (v: boolean) => void) => void;
+  
 }

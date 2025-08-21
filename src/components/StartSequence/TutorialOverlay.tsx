@@ -1,29 +1,5 @@
-
-/**
- * Props for the TutorialOverlay component.
- *
- * @property highlight - CSS selector string or an object specifying the highlight rectangle (top, left, width, height).
- * @property title - Title text displayed in the overlay.
- * @property text - Optional descriptive text displayed below the title.
- * @property options - Optional array of selectable options, either as strings or objects with label and value.
- * @property onNext - Callback invoked when the "Next" button is clicked or an option is selected.
- * @property onSelect - Optional callback invoked when an option is selected.
- * @property onSkip - Callback invoked when the "Skip" button is clicked.
- * @property skipButton - Whether to show the "Skip" button (default: true).
- * @property type - Optional type string for custom usage.
- * @property buttonText - Text for the "Next" button (default: "Next").
- * @property centered - Whether to center the popup regardless of highlight.
- */
-
-/**
- * TutorialOverlay component displays a guided overlay with highlight, title, text, options, and navigation actions.
- * It positions itself relative to a highlighted element or centered, and supports option selection and skipping.
- * For the tasksize options, TutorialOverlay just tells the parent which option was clicked via onNext(val) or onSelect(val).
- * 
- * @param props - {@link TutorialOverlayProps}
- * @returns React element for the tutorial overlay.
- */
-import React, { useLayoutEffect, useRef, useState } from "react";
+// TutorialOverlay.tsx
+import React, { useLayoutEffect, useRef, useState, useEffect } from "react";
 import "./tutorial.css";
 
 type Option = string | { label: string; value?: string };
@@ -33,13 +9,18 @@ interface TutorialOverlayProps {
   title: string;
   text?: string;
   options?: Option[];
-  onNext: (value?: string) => void;
-  onSelect?: (val: string) => void;
-  onSkip: () => void;
   skipButton?: boolean;
   type?: string;
   buttonText?: string;
   centered?: boolean;
+  onNext: (value?: string) => void;
+  onSelect?: (val: string) => void;
+  onSkip: () => void;
+  setHasProlific?: (v: boolean) => void;
+  setProlificID?: (id: string) => void;
+  showProlificInput?: boolean;
+  setShowProlificInput?: (v: boolean) => void;
+  prolificID?: string;
 }
 
 const TutorialOverlay: React.FC<TutorialOverlayProps> = ({
@@ -47,27 +28,38 @@ const TutorialOverlay: React.FC<TutorialOverlayProps> = ({
   title,
   text,
   options,
-  onNext,
-  onSelect,
-  onSkip,
   skipButton = true,
   buttonText = "Next",
   centered = false,
+  onNext,
+  onSelect,
+  onSkip,
+  setHasProlific,
+  setProlificID,
+  showProlificInput,
+  setShowProlificInput,
+  //prolificID,
 }) => {
+  const [prolificIDInput, setProlificIDInput] = useState("");
   const popupRef = useRef<HTMLDivElement | null>(null);
   const [rect, setRect] = useState<DOMRect | null>(null);
   const [popupPos, setPopupPos] = useState<{ top: number; left: number } | null>(null);
   const [side, setSide] = useState<"right" | "left" | "top" | "bottom">("right");
 
-  // normalize options into objects {label, value}
+  const prolificInputRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    if (showProlificInput) {
+      // wait a tick to ensure input is in DOM
+      setTimeout(() => prolificInputRef.current?.focus(), 30);
+    }
+  }, [showProlificInput]);
+
   const normalizedOptions = (options || []).map((o) =>
     typeof o === "string" ? { label: o, value: o } : { label: o.label, value: o.value ?? o.label }
   );
 
-  // helper: compute highlight rect
   const computeRect = () => {
     if (!highlight) return null;
-
     if (typeof highlight === "string") {
       const el = document.querySelector(highlight);
       if (el) return el.getBoundingClientRect();
@@ -84,14 +76,12 @@ const TutorialOverlay: React.FC<TutorialOverlayProps> = ({
     return null;
   };
 
-  // measure highlight rect on mount, scroll, resize
   useLayoutEffect(() => {
     const update = () => {
       const r = computeRect();
       if (r) setRect(r);
     };
     update();
-
     window.addEventListener("scroll", update, true);
     window.addEventListener("resize", update);
     return () => {
@@ -100,7 +90,6 @@ const TutorialOverlay: React.FC<TutorialOverlayProps> = ({
     };
   }, [highlight]);
 
-  // Measure popup and pick side + position
   useLayoutEffect(() => {
     if (!rect) {
       setPopupPos(null);
@@ -149,7 +138,6 @@ const TutorialOverlay: React.FC<TutorialOverlayProps> = ({
         left = rect.left + rect.width / 2 - popupW / 2;
       }
 
-      // clamp to viewport
       if (top < margin) top = margin;
       if (top + popupH > window.innerHeight - margin) top = window.innerHeight - popupH - margin;
       if (left < margin) left = margin;
@@ -164,10 +152,11 @@ const TutorialOverlay: React.FC<TutorialOverlayProps> = ({
     return () => window.clearTimeout(t);
   }, [rect, title, text, JSON.stringify(normalizedOptions)]);
 
+  // When showProlificInput is true we render only the input block (with Cancel).
+  // Otherwise we render the normal option buttons.
   const handleOptionClick = (opt: { label: string; value?: string }) => {
     const val = opt.value ?? opt.label;
     if (onSelect) onSelect(val);
-    onNext(val);
   };
 
   return (
@@ -177,10 +166,10 @@ const TutorialOverlay: React.FC<TutorialOverlayProps> = ({
           className="tutorial-backdrop"
           style={{
             WebkitMask: `radial-gradient(
-              circle 0 at ${rect.left + rect.width / 2}px ${rect.top + rect.height / 2}px,
-              transparent 98%,
-              black 100%
-            )`,
+            circle 0 at ${rect.left + rect.width / 2}px ${rect.top + rect.height / 2}px,
+            transparent 98%,
+            black 100%
+          )`,
           }}
         />
       )}
@@ -200,10 +189,10 @@ const TutorialOverlay: React.FC<TutorialOverlayProps> = ({
       <div
         ref={popupRef}
         className={`tutorial-popup ${centered
-            ? "tutorial-popup-centered" // 👈 force center
-            : !rect && normalizedOptions.length > 0
-              ? "tutorial-popup-centered"
-              : `arrow-${side}`
+          ? "tutorial-popup-centered"
+          : !rect && normalizedOptions.length > 0
+            ? "tutorial-popup-centered"
+            : `arrow-${side}`
           }`}
         style={{
           top: centered || !rect ? "50%" : popupPos?.top,
@@ -211,12 +200,44 @@ const TutorialOverlay: React.FC<TutorialOverlayProps> = ({
           transform: centered || !rect ? "translate(-50%,-50%)" : undefined,
         }}
       >
-
         <div className="tutorial-popup-inner">
           <h3 className="tutorial-title">{title}</h3>
           {text && <div className="tutorial-text">{text}</div>}
 
-          {normalizedOptions.length > 0 ? (
+          {/* If the parent signalled we should show Prolific input, render only the input UI */}
+          {showProlificInput ? (
+            <div style={{ marginTop: 12 }}>
+              <div className="tutorial-prolific-input">
+                <input
+                  ref={prolificInputRef}
+                  type="text"
+                  placeholder="Enter your Prolific ID"
+                  value={prolificIDInput}
+                  onChange={(e) => setProlificIDInput(e.target.value)}
+                />
+                <button
+                  onClick={() => {
+                    const trimmed = prolificIDInput.trim();
+                    if (!trimmed) return;
+                    setProlificID?.(trimmed);
+                    setHasProlific?.(true);
+                    onNext(trimmed); // advance parent
+                  }}
+                >
+                  Continue
+                </button>
+                <button
+                  onClick={() => {
+                    // cancel back to options (parent owns showProlificInput)
+                    setShowProlificInput?.(false);
+                    setProlificIDInput("");
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : normalizedOptions.length > 0 ? (
             <div className="tutorial-options">
               {normalizedOptions.map((opt) => (
                 <button
@@ -227,6 +248,7 @@ const TutorialOverlay: React.FC<TutorialOverlayProps> = ({
                   {opt.label}
                 </button>
               ))}
+
               {skipButton && (
                 <button className="tutorial-skip" onClick={onSkip}>
                   Skip

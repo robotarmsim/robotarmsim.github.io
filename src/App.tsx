@@ -15,12 +15,12 @@ import { nanoid } from 'nanoid';
 import { CurrentTaskDisplay } from './components/CurrentTaskDisplay';
 import { useTrackingLogs, type MotionLogEntry } from './hooks/useTrackingLogs';
 // took out SessionLogs from above. TBD.
-//import { loadPromptBank } from "./utils/promptBank";
+import { loadPromptBank } from "./utils/promptBank";
 //import { taskSizeMap } from "./utils/taskPicker";
 import StartSequenceManager from './components/StartSequence/StartSequenceManager';
 //import { tutorialSteps } from './components/StartSequence/tutorialSteps';
 import HelpButton from './components/UI/HelpButton';
-
+import { pickTasks } from './utils/taskPicker';
 
 
 import {
@@ -36,20 +36,47 @@ import {
 
 export default function App(
 ) {
+  //WIPE LOCAL STORAGE
+  //   useEffect(() => {
+  //   localStorage.clear();
+  // }, []);
+
   // Initial states/tutorial
   const [started, setStarted] = useState(false);
   const [showStartSequence, setShowStartSequence] = useState(false);
   const [resetTutorialSignal, setResetTutorialSignal] = useState(0);
 
-  // for autopromptlist!!
-  // const [allPrompts, setAllPrompts] = useState<string[]>([]);
-  // const [tasks, setTasks] = useState<string[]>([]);
-  // // Load prompt bank on startup
-  // useEffect(() => {
-  //   loadPromptBank().then(setAllPrompts);
-  // }, []);
-  const [hasChosenSize, setHasChosenSize] = useState(false);
+  // tutorial completed flag (session). prevents accidental auto-replay.
+  const [tutorialCompleted, setTutorialCompleted] = useState<boolean>(() => {
+    return !!sessionStorage.getItem("tutorialCompleted");
+  });
 
+  // helper
+  const openTutorial = (opts?: { force?: boolean }) => {
+    const force = !!opts?.force;
+    const alreadyCompleted = !!sessionStorage.getItem("tutorialCompleted");
+    if (alreadyCompleted && !force) {
+      console.log("[Tutorial] openTutorial blocked: already completed this session. Pass force:true to override.");
+      return false;
+    }
+    console.log("[Tutorial] openTutorial -> opening (force:", force, ")");
+    setShowStartSequence(true);
+    setResetTutorialSignal(prev => prev + 1);
+    return true;
+  };
+
+
+  // for autopromptlist!!
+  const [allPrompts, setAllPrompts] = useState<string[]>([]);
+  //const [tasks, setTasks] = useState<string[]>([]);
+  // Load prompt bank on startup
+  useEffect(() => {
+    loadPromptBank().then(setAllPrompts);
+  }, []);
+  // read chosenSize from sessionStorage (persisted by StartSequenceManager)
+  const [hasChosenSize, setHasChosenSize] = useState<boolean>(() => {
+    return !!sessionStorage.getItem("chosenSize");
+  });
 
   // State for path key points
   const [devMenuOpen, setDevMenuOpen] = useState(false);
@@ -85,6 +112,7 @@ export default function App(
     END_POINT,
   ]);
 
+
   // ZONE STUFF
   const [robotTip, setRobotTip] = useState<Point>(pathPoints[0]);
   const { zones, setZones, addZone, clearZones } = useZones(CANVAS_HEIGHT / 2);
@@ -106,6 +134,48 @@ export default function App(
   const [curvatureGraph, setCurvatureGraph] = useState<Point[]>(() =>
     pathPoints.map((_, i) => ({ x: i / (pathPoints.length - 1 || 1), y: 0 })) // 0 by default
   );
+
+
+  // auto clear if ?resetTutorial=1 in URL
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("resetTutorial") === "1") {
+      console.log("[Tutorial] resetTutorial=1 -> clearing session keys and state");
+      sessionStorage.removeItem("chosenSize");
+      sessionStorage.removeItem("taskList");
+      sessionStorage.removeItem("hasProlific");
+      sessionStorage.removeItem("prolificID");
+      sessionStorage.removeItem("tutorialCompleted");
+
+      setTutorialCompleted(false);
+      setHasChosenSize(false);
+      setTaskList([]);
+      setCurrentTaskIndex(0);
+      setShowStartSequence(true); // optionally open tutorial immediately
+
+      // remove query param so subsequent reloads won't keep clearing
+      params.delete("resetTutorial");
+      const newUrl = window.location.pathname + (params.toString() ? "?" + params.toString() : "");
+      window.history.replaceState({}, "", newUrl);
+    }
+  }, []); // run once on mount
+
+  // if tasklist is present on mount hasChosenSize and taskindex are consistent
+  useEffect(() => {
+    const sessSize = sessionStorage.getItem("chosenSize");
+    if (sessSize) setHasChosenSize(true);
+
+    const sessTasks = sessionStorage.getItem("taskList");
+    if (sessTasks) {
+      try {
+        const parsed = JSON.parse(sessTasks);
+        if (Array.isArray(parsed) && parsed.length) {
+          setTaskList(parsed);
+          setCurrentTaskIndex(0);
+        }
+      } catch { }
+    }
+  }, []); // run once
 
   useEffect(() => {
     function onDevEnable() {
@@ -229,7 +299,7 @@ export default function App(
       const speedVal = speedMap.evaluate(normalizedPos);
       const noiseVal = noiseMap.evaluate(normalizedPos);
 
-      const time = performance.now() / 1000; // 
+      const time = performance.now() / 1000; //
 
       const noiseOffsetX = perlin1D(time + normalizedPos * 2) * 100 * noiseVal;
       const noiseOffsetY = perlin1D(time + normalizedPos * 2 + 1000) * 100 * noiseVal;
@@ -341,7 +411,12 @@ export default function App(
                   <button
                     onClick={() => {
                       setStarted(true);           // show main app layout
-                      setShowStartSequence(true); // immediately trigger tutorial
+                      // explicit user start resets completed flag
+                      sessionStorage.removeItem("tutorialCompleted");
+                      setTutorialCompleted(false);
+                      console.log("[Tutorial] Start button clicked -> opening tutorial (explicit user action)");
+                      openTutorial({ force: true }); // explicit user start forces open
+                      //setShowStartSequence(true); // immediately trigger tutorial
                     }}
                   >
                     Start Tutorial
@@ -356,7 +431,7 @@ export default function App(
                   <div className="app-container" id="mainContent">
                     <div className="main-container" id="main-container">
                       <div id="starting-point">
-                        <h1>Robot Arm Simulator</h1>
+                        {/* <h1>Robot Arm Simulator</h1> */}
                       </div>
                       <div id="main-wrapper">
                         <div
@@ -490,10 +565,26 @@ export default function App(
                     <HelpButton
                       id="help-button"
                       onReplayTutorial={() => {
-                        setShowStartSequence(true);              // make the tutorial visible
-                        setResetTutorialSignal(prev => prev + 1); // trigger reset logic inside it
+                        // normal open: will be blocked if completed; ask user if they want to force
+                        const alreadyCompleted = !!sessionStorage.getItem("tutorialCompleted");
+                        if (alreadyCompleted) {
+                          const ok = window.confirm("You've already completed the tutorial this session. Replay it? This will reset your tutorial answers for this session.");
+                          if (!ok) {
+                            console.log("[Tutorial] Replay canceled by user (already completed)");
+                            return;
+                          }
+                          // user confirmed: force open and clear previous answers
+                          sessionStorage.removeItem("tutorialCompleted");
+                          sessionStorage.removeItem("chosenSize");
+                          sessionStorage.removeItem("taskList");
+                          sessionStorage.removeItem("hasProlific");
+                          sessionStorage.removeItem("prolificID");
+                          setTutorialCompleted(false);
+                        }
+                        openTutorial({ force: true });
                       }}
                     />
+
 
                     {/* ABOvE: NEED TO FIX... */}
                     {/* Dev Menu overlay */}
@@ -544,13 +635,28 @@ export default function App(
 
                   </div>
                   {/* Tutorial Overlay */}
-                  {showStartSequence && (
+                  {showStartSequence && !tutorialCompleted && (
                     <StartSequenceManager
                       //tutorialSteps={tutorialSteps}
-                      onComplete={() => setShowStartSequence(false)}
+                      onComplete={() => {
+                        // mark completed and hide overlay (idempotent)
+                        console.log("[Tutorial] onComplete called - marking tutorial completed this session");
+                        setShowStartSequence(false);
+                        setTutorialCompleted(true);
+                        sessionStorage.setItem("tutorialCompleted", "1");
+                      }}
                       resetSignal={resetTutorialSignal}
-                      hasChosenSize={hasChosenSize}              // 👈 pass down
-                      onSizeChosen={() => setHasChosenSize(true)} // 👈 callback
+                      hasChosenSize={hasChosenSize}              // pass down
+                      onSizeChosen={(size) => {
+                        setHasChosenSize(true);
+                        const chosenTasks = pickTasks(allPrompts, size);
+                        setTaskList(chosenTasks);
+                        setCurrentTaskIndex(0);
+                        sessionStorage.setItem("taskList", JSON.stringify(chosenTasks));
+                        // persist chosenSize so reloads can bootstrap
+                        sessionStorage.setItem("chosenSize", size);
+                      } // callback
+                      }
                     />
                   )}
                 </div>
