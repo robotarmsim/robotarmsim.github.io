@@ -1,126 +1,119 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+// src/App.tsx
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { RobotArm, type Point } from './utils/RobotArm';
-// import { catmullRomSpline } from './utils/CatmullRom';
-import { bezierSpline } from './utils/Bezier';
 import { CanvasStage } from './components/CanvasStage';
 import DevMenu from './components/DevMenu';
-import { GraphEditorPanel } from './components/GraphEditorPanel';
+import { GraphEditorPanel } from './components/GraphEditorPanel-v2';
 import { PlayButton } from './components/UI/PlayButton';
-import { MotionParameterMap } from './utils/MotionParameterMap';
-import { perlin1D } from './utils/perlin';
+import useMotionEngine from './hooks/useMotionEngine';
 import { useZones } from './types/zones';
 import { HashRouter, Routes, Route } from 'react-router-dom';
 import MarkdownViewer from './MarkdownViewer';
 import { nanoid } from 'nanoid';
 import { CurrentTaskDisplay } from './components/CurrentTaskDisplay';
 import { useTrackingLogs, type MotionLogEntry } from './hooks/useTrackingLogs';
-// took out SessionLogs from above. TBD.
-import { loadPromptBank } from "./utils/promptBank";
-//import { taskSizeMap } from "./utils/taskPicker";
-import StartSequenceManager from './components/StartSequence/StartSequenceManager';
-//import { tutorialSteps } from './components/StartSequence/tutorialSteps';
 import HelpButton from './components/UI/HelpButton';
-import { pickTasks } from './utils/taskPicker';
 
+import StartScreen from './components/StartScreen';
+import SplashScreen from './components/SplashScreen';
+import Tutorial from './components/Tutorial';
+import { getRandomPromptList } from "./utils/promptBank";
+import ProgressPie from './components/ProgressPie';
 
 import {
   CANVAS_WIDTH,
   CANVAS_HEIGHT,
-  //MAX_POINTS,
   ARM_BASE,
   LIMB_LENGTHS,
   START_POINT,
   END_POINT,
 } from './config/constants';
 
+import {
+  initSegmentValuesForPath,
+  resampleSegmentsToPath,
+  pointGraphFromSegmentValues,
+} from './utils/segmentUtils';
 
-export default function App(
-) {
-  //WIPE LOCAL STORAGE
-  //   useEffect(() => {
-  //   localStorage.clear();
-  // }, []);
+// Use the PathParameterMap class (constructor takes pathPoints: Point[])
+import PathParameterMap from './utils/PathParameterMap';
 
-  // Initial states/tutorial
+export default function App() {
+  // start / tutorial
+  const [showSplash, setShowSplash] = useState(true);
+  const [showStartScreen, setShowStartScreen] = useState(false);
   const [started, setStarted] = useState(false);
-  const [showStartSequence, setShowStartSequence] = useState(false);
-  const [resetTutorialSignal, setResetTutorialSignal] = useState(0);
+  const [showTutorial, setShowTutorial] = useState(false);
+  const [, setTutorialCompleted] = useState<boolean>(() => !!sessionStorage.getItem('tutorialCompleted'));
 
-  // tutorial completed flag (session). prevents accidental auto-replay.
-  const [tutorialCompleted, setTutorialCompleted] = useState<boolean>(() => {
-    return !!sessionStorage.getItem("tutorialCompleted");
-  });
-
-  // helper
   const openTutorial = (opts?: { force?: boolean }) => {
     const force = !!opts?.force;
-    const alreadyCompleted = !!sessionStorage.getItem("tutorialCompleted");
-    if (alreadyCompleted && !force) {
-      console.log("[Tutorial] openTutorial blocked: already completed this session. Pass force:true to override.");
-      return false;
-    }
-    console.log("[Tutorial] openTutorial -> opening (force:", force, ")");
-    setShowStartSequence(true);
-    setResetTutorialSignal(prev => prev + 1);
+    const alreadyCompleted = !!sessionStorage.getItem('tutorialCompleted');
+    if (alreadyCompleted && !force) return false;
+    setStarted(true);
+    setShowTutorial(true);
     return true;
   };
 
-
-  // for autopromptlist!!
-  const [allPrompts, setAllPrompts] = useState<string[]>([]);
-  //const [tasks, setTasks] = useState<string[]>([]);
-  // Load prompt bank on startup
-  useEffect(() => {
-    loadPromptBank().then(setAllPrompts);
-  }, []);
-  // read chosenSize from sessionStorage (persisted by StartSequenceManager)
-  const [hasChosenSize, setHasChosenSize] = useState<boolean>(() => {
-    return !!sessionStorage.getItem("chosenSize");
-  });
-
-  // State for path key points
+  // general state
   const [devMenuOpen, setDevMenuOpen] = useState(false);
-  //const [hasAccess, setHasAccess] = useState(false);
   const [totalDuration, setTotalDuration] = useState(5);
-
-
-  // CSVLOADER & DEVMENU STUFF
-  const [showProgress, setShowProgress] = useState(false);
+  const [showProgress, setShowProgress] = useState(true);
   const [currentTaskIndex, setCurrentTaskIndex] = useState(0);
   const [taskList, setTaskList] = useState<string[]>(() => {
-    const saved = localStorage.getItem("taskList");
-    return saved ? JSON.parse(saved) : [];
+    const saved = sessionStorage.getItem("taskList");
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch {
+        // ignore
+      }
+    }
+    return [];
   });
-  // Get tasks that are NOT interruptions
-  const realTasks = taskList.filter(task => !task.startsWith("__INTERRUPTION__"));
-  // Compute current real index
+
+  useEffect(() => {
+    let mounted = true;
+    const saved = sessionStorage.getItem("taskList");
+    if (saved) return;
+    (async () => {
+      try {
+        const list = await getRandomPromptList();
+        if (!mounted) return;
+        const finalList = Array.isArray(list)
+          ? list
+          : (typeof list === 'object' && list !== null && Array.isArray((list as any).list) ? (list as any).list : []);
+        if (finalList && finalList.length) {
+          sessionStorage.setItem("taskList", JSON.stringify(finalList));
+          setTaskList(finalList);
+        }
+      } catch (err) {
+        console.warn('Failed to load prompts', err);
+      }
+    })();
+    return () => { mounted = false; };
+  }, []);
+
+  const realTasks = taskList.filter(task => !task.startsWith('__INTERRUPTION__'));
   const currentRealIndex = realTasks.findIndex(t => t === taskList[currentTaskIndex]);
 
-  // USER ID
-  const [userId] = useState(() =>
-    localStorage.getItem('userId')
-    || (() => {
+  // user id
+  const [userId, setUserId] = useState<string>(() =>
+    localStorage.getItem('userId') || (() => {
       const id = nanoid();
       localStorage.setItem('userId', id);
       return id;
     })()
   );
 
-  // pathpoints.
-  const [pathPoints, setPathPoints] = useState<Point[]>([
-    START_POINT,
-    END_POINT,
-  ]);
+  // path points
+  const [pathPoints, setPathPoints] = useState<Point[]>([START_POINT, END_POINT]);
 
-
-  // ZONE STUFF
+  // zones, logs
   const [robotTip, setRobotTip] = useState<Point>(pathPoints[0]);
   const { zones, setZones, addZone, clearZones } = useZones(CANVAS_HEIGHT / 2);
 
-  //RECORDING MOTION
   const {
-    //motionLog,
-    //sessionLog,
     logMotionFrame,
     logSessionEvent,
     saveMotionLog,
@@ -130,224 +123,110 @@ export default function App(
     setSessionLog,
   } = useTrackingLogs();
 
-  // Curvature tension controls Catmull-Rom spline tightness (0 = tight, 1 = loose)
-  const [curvatureGraph, setCurvatureGraph] = useState<Point[]>(() =>
-    pathPoints.map((_, i) => ({ x: i / (pathPoints.length - 1 || 1), y: 0 })) // 0 by default
-  );
+  // --- PER-SEGMENT GRAPH STATE ---
+  // (n-1 values for n path points)
+  const [directnessSegments, setDirectnessSegments] = useState<number[]>(() => initSegmentValuesForPath(pathPoints, 0));
+  const [tempoSegments, setTempoSegments] = useState<number[]>(() => initSegmentValuesForPath(pathPoints, 0));
+  const [smoothnessSegments, setSmoothnessSegments] = useState<number[]>(() => initSegmentValuesForPath(pathPoints, 0));
 
-
-  // auto clear if ?resetTutorial=1 in URL
+  // sync segments when path length changes
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("resetTutorial") === "1") {
-      console.log("[Tutorial] resetTutorial=1 -> clearing session keys and state");
-      sessionStorage.removeItem("chosenSize");
-      sessionStorage.removeItem("taskList");
-      sessionStorage.removeItem("hasProlific");
-      sessionStorage.removeItem("prolificID");
-      sessionStorage.removeItem("tutorialCompleted");
-
-      setTutorialCompleted(false);
-      setHasChosenSize(false);
-      setTaskList([]);
-      setCurrentTaskIndex(0);
-      setShowStartSequence(true); // optionally open tutorial immediately
-
-      // remove query param so subsequent reloads won't keep clearing
-      params.delete("resetTutorial");
-      const newUrl = window.location.pathname + (params.toString() ? "?" + params.toString() : "");
-      window.history.replaceState({}, "", newUrl);
-    }
-  }, []); // run once on mount
-
-  // if tasklist is present on mount hasChosenSize and taskindex are consistent
-  useEffect(() => {
-    const sessSize = sessionStorage.getItem("chosenSize");
-    if (sessSize) setHasChosenSize(true);
-
-    const sessTasks = sessionStorage.getItem("taskList");
-    if (sessTasks) {
-      try {
-        const parsed = JSON.parse(sessTasks);
-        if (Array.isArray(parsed) && parsed.length) {
-          setTaskList(parsed);
-          setCurrentTaskIndex(0);
-        }
-      } catch { }
-    }
-  }, []); // run once
-
-  useEffect(() => {
-    function onDevEnable() {
-      document.body.classList.remove("dev-hidden");
-      // show your dev menu again
-    }
-    window.addEventListener("dev:enable", onDevEnable);
-    return () => window.removeEventListener("dev:enable", onDevEnable);
-  }, []);
-
-
-  useEffect(() => {
-    document.body.classList.toggle('dev-menu-open', devMenuOpen);
-  }, [devMenuOpen]);
-
-  useEffect(() => {
-    //console.log('App showProgress is now', showProgress);
-  }, [showProgress]);
-
-
-  useEffect(() => {
-    function syncGraph(graph: Point[], setter: React.Dispatch<React.SetStateAction<Point[]>>) {
-      const n = pathPoints.length;
-      const newGraph = [];
-      for (let i = 0; i < n; i++) {
-        const normalizedX = n === 1 ? 0 : i / (n - 1);
-        newGraph.push({ x: normalizedX, y: graph[i]?.y ?? 0 }); // default to 0
-      }
-      setter(newGraph);
-    }
-    syncGraph(curvatureGraph, setCurvatureGraph);
-    syncGraph(speedGraph, setSpeedGraph);
-    syncGraph(noiseGraph, setNoiseGraph);
+    setDirectnessSegments(prev => resampleSegmentsToPath(prev, pathPoints));
+    setTempoSegments(prev => resampleSegmentsToPath(prev, pathPoints));
+    setSmoothnessSegments(prev => resampleSegmentsToPath(prev, pathPoints));
   }, [pathPoints.length]);
 
-  // Graph data for speed and noise along the path (normalized 0..1)
-  const [speedGraph, setSpeedGraph] = useState<Point[]>(() =>
-    pathPoints.map((_, i) => ({ x: i / (pathPoints.length - 1 || 1), y: 0.5 }))
-  );
-  const [noiseGraph, setNoiseGraph] = useState<Point[]>(() =>
-    pathPoints.map((_, i) => ({ x: i / (pathPoints.length - 1 || 1), y: 0 })) //0 by default
-  );
+  /**
+   * Build & maintain a PathParameterMap instance.
+   *
+   * Important:
+   * - PathParameterMap constructor takes the pathPoints array.
+   * - We convert per-segment arrays (what the GraphEditor produces)
+   *   into vertex control-points using pointGraphFromSegmentValues,
+   *   then store those control points into the PathParameterMap using
+   *   the typed setters (setDirectnessPoints / setTempoPoints / setSmoothnessPoints).
+   *
+   * This keeps your UI editing (segment arrays) and runtime evaluation (PathParameterMap)
+   * in sync without changing how GraphEditorPanel works.
+   */
+  const pathMap = useMemo(() => {
+    const pm = new PathParameterMap(pathPoints);
 
-  // Sync graphs when pathPoints length changes (to avoid mismatch)
-  useEffect(() => {
-    function syncGraph(graph: Point[], setter: React.Dispatch<React.SetStateAction<Point[]>>) {
-      const n = pathPoints.length;
-      const newGraph = [];
-      for (let i = 0; i < n; i++) {
-        const normalizedX = n === 1 ? 0 : i / (n - 1);
-        newGraph.push({ x: normalizedX, y: graph[i]?.y ?? 0 }); // default to 0
-      }
-      setter(newGraph);
-    }
-    syncGraph(speedGraph, setSpeedGraph);
-    syncGraph(noiseGraph, setNoiseGraph);
-  }, [pathPoints.length]);
+    // convert per-segment data -> vertex graph control points
+    const directCP = pointGraphFromSegmentValues(directnessSegments, pathPoints); // [{x,y},...]
+    const tempoCP = pointGraphFromSegmentValues(tempoSegments, pathPoints);
+    const smoothCP = pointGraphFromSegmentValues(smoothnessSegments, pathPoints);
 
-  // Create motion parameter maps for interpolation
-  const curvatureMap = useMemo(() => new MotionParameterMap(curvatureGraph), [curvatureGraph]);
-  const speedMap = useMemo(() => new MotionParameterMap(speedGraph), [speedGraph]);
-  const noiseMap = useMemo(() => new MotionParameterMap(noiseGraph), [noiseGraph]);
+    // set them into the PathParameterMap
+    pm.setDirectnessPoints(directCP);
+    pm.setTempoPoints(tempoCP);
+    pm.setSmoothnessPoints(smoothCP);
 
-  // Initialize robot arm
+    return pm;
+  }, [pathPoints, directnessSegments, tempoSegments, smoothnessSegments]);
+
+  // Robot arm
   const arm = useMemo(() => new RobotArm(ARM_BASE, LIMB_LENGTHS), []);
 
-  // Angles to render arm joints
   const [angles, setAngles] = useState<[number, number]>(() => {
     arm.solveIK(pathPoints[0]);
     return [...arm.angles];
   });
 
-  // Animation refs/state
-  const animationRef = useRef<number | null>(null);
+  // Throttled logging
+  const lastLogTimeRef = useRef<number>(0);
+  const LOG_INTERVAL_MS = 100;
 
-  // Play animation function -> moves along spline using tension & speed/noise maps
+  // Motion engine expects objects that expose evaluate(s:number): number.
+  // PathParameterMap exposes evaluateDirectness / evaluateSmoothness / evaluateTempo.
+  // Create small wrappers that forward evaluate -> pathMap.evaluate*
+  const directnessMap = useMemo(() => ({ evaluate: (s: number) => pathMap.evaluateDirectness(s) }), [pathMap]);
+  const tempoMap = useMemo(() => ({ evaluate: (s: number) => pathMap.evaluateTempo(s) }), [pathMap]);
+  const smoothnessMap = useMemo(() => ({ evaluate: (s: number) => pathMap.evaluateSmoothness(s) }), [pathMap]);
+
+  // Motion engine callback
+  const onFrame = (frame: any) => {
+    setRobotTip(frame.position);
+    setAngles(frame.angles);
+
+    try {
+      const now = performance.now();
+      if (now - lastLogTimeRef.current >= LOG_INTERVAL_MS) {
+        lastLogTimeRef.current = now;
+        logMotionFrame({
+          t: frame.t,
+          position: frame.position,
+          angles: frame.angles,
+          speed: frame.speedFraction,
+          velocity: frame.velocity,
+          noise: 0,
+          userId,
+          task: taskList[currentTaskIndex] || null,
+        });
+      }
+    } catch (err) {
+      console.warn('Throttled logging failed', err);
+    }
+  };
+
+  // call the hook with the three parameter-maps (objects with evaluate(s):number)
+  const { play, replay, stop } = useMotionEngine({
+    arm,
+    directnessMap,
+    tempoMap,
+    smoothnessMap,
+    totalDuration,
+    onFrame,
+  });
+
   function handlePlay() {
-    if (animationRef.current !== null) {
-      cancelAnimationFrame(animationRef.current);
-    }
-
-    // Generate smooth spline with current tension
-    const smoothSpline = bezierSpline(
-      pathPoints,
-      20,
-      t => curvatureMap.evaluate(t)  // <-- pass a function here!
-    );
-
-
-    //let progress = 0;
-    const maxProgress = smoothSpline.length - 1;
-    const animationStart = performance.now(); // capture the start time
-
-    // Speed range in spline indices per frame
-    const minSpeed = 0.005;
-    const maxSpeed = 100;
-
-    function step() {
-      const elapsed = (performance.now() - animationStart) / 1000; // seconds
-      const normalizedTime = Math.min(elapsed / totalDuration, 1); // clamp to 1
-      const progress = normalizedTime * maxProgress;
-      if (progress >= maxProgress) {
-        setAngles([...arm.angles]); // Final pose
-        animationRef.current = null;
-        return; // Stop animation
-      }
-
-      const i = Math.floor(progress);
-      const t = progress - i;
-
-      // Interpolate between smooth spline points
-      const p1 = smoothSpline[i];
-      const p2 = smoothSpline[Math.min(i + 1, maxProgress)];
-      const interpX = p1.x * (1 - t) + p2.x * t;
-      const interpY = p1.y * (1 - t) + p2.y * t;
-
-      // Normalized progress [0..1]
-      const normalizedPos = progress / maxProgress;
-
-      // Evaluate speed & noise
-      const speedVal = speedMap.evaluate(normalizedPos);
-      const noiseVal = noiseMap.evaluate(normalizedPos);
-
-      const time = performance.now() / 1000; //
-
-      const noiseOffsetX = perlin1D(time + normalizedPos * 2) * 100 * noiseVal;
-      const noiseOffsetY = perlin1D(time + normalizedPos * 2 + 1000) * 100 * noiseVal;
-
-      const noisyTarget = { x: interpX + noiseOffsetX, y: interpY + noiseOffsetY };
-
-      setRobotTip(noisyTarget); // Track real-time robot position
-
-      // Solve IK for noisy target & update angles
-      arm.solveIK(noisyTarget);
-      setAngles([...arm.angles]);
-
-      // Log motion frame for recording
-      logMotionFrame({
-        t: performance.now(),
-        position: noisyTarget,
-        angles: [...arm.angles],
-        speed: speedVal,
-        velocity: minSpeed + speedVal * (maxSpeed - minSpeed),
-        noise: noiseVal,
-
-        userId,
-        task: taskList[currentTaskIndex] || null,
-      });
-
-      if (normalizedTime < 1) {
-        animationRef.current = requestAnimationFrame(step);
-      } else {
-        animationRef.current = null; // Done
-      }
-    }
-
-    animationRef.current = requestAnimationFrame(step);
+    play(pathPoints, { totalDuration });
   }
 
-  // Replay function drives arm from a saved motionLog
   function replayMotion(data: MotionLogEntry[]) {
-    let idx = 0;
-    function step() {
-      if (idx >= data.length) return;
-      const entry = data[idx++];
-      setRobotTip(entry.position);
-      setAngles(entry.angles);
-      requestAnimationFrame(step);
-    }
-    requestAnimationFrame(step);
+    const frames = data.map(d => ({ position: d.position, angles: d.angles, meta: d }));
+    replay(frames);
   }
-
 
   useEffect(() => {
     setZones(zones =>
@@ -361,40 +240,22 @@ export default function App(
             return { ...zone, visited: true };
           }
         }
-
         return zone;
       })
     );
-  }, [robotTip]);
-
-
-  // Cleanup animation frame on unmount
-  useEffect(() => {
-    return () => {
-      if (animationRef.current !== null) {
-        cancelAnimationFrame(animationRef.current);
-      }
-    };
-  }, []);
-
-  // TOGGLE DEV MENU
-  document.addEventListener("keydown", function (e) {
-    if (e.ctrlKey && e.shiftKey && e.key === "~") {
-      setDevMenuOpen(prev => !prev); // toggle the state
-    }
-  });
+  }, [robotTip, setZones]);
 
   useEffect(() => {
-    const handler = (e: { ctrlKey: any; shiftKey: any; key: string; }) => {
-      if (e.ctrlKey && e.shiftKey && e.key === "~") {
+    const handler = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && e.key === '~') {
         setDevMenuOpen(prev => !prev);
       }
     };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
   }, []);
 
-
+  useEffect(() => () => stop(), [stop]);
 
   return (
     <HashRouter>
@@ -403,51 +264,62 @@ export default function App(
           path="/"
           element={
             <div id="root">
-
-              {/* Start Screen Overlay */}
-              {!started && (
-                <div id="title-screen">
-                  <h1>Robot Arm Simulator</h1>
-                  <button
-                    onClick={() => {
-                      setStarted(true);           // show main app layout
-                      // explicit user start resets completed flag
-                      sessionStorage.removeItem("tutorialCompleted");
-                      setTutorialCompleted(false);
-                      console.log("[Tutorial] Start button clicked -> opening tutorial (explicit user action)");
-                      openTutorial({ force: true }); // explicit user start forces open
-                      //setShowStartSequence(true); // immediately trigger tutorial
-                    }}
-                  >
-                    Start Tutorial
-                  </button>
-                </div>
+              {showSplash && (
+                <SplashScreen
+                  onContinue={(optionalId?: string) => {
+                    if (optionalId && optionalId.trim().length > 0) {
+                      const id = optionalId.trim();
+                      setUserId(id);
+                      localStorage.setItem('userId', id);
+                    }
+                    setShowSplash(false);
+                    setShowStartScreen(true);
+                  }}
+                />
               )}
 
+              {showStartScreen && !showTutorial && (
+                <StartScreen
+                  participantId={userId}
+                  onStartTutorial={() => {
+                    setShowStartScreen(false);
+                    openTutorial({ force: true });
+                  }}
+                  onSkipTutorial={() => {
+                    setShowStartScreen(false);
+                    setStarted(true);
+                    sessionStorage.setItem('tutorialCompleted', '1');
+                    setTutorialCompleted(true);
+                  }}
+                />
+              )}
 
               {started && (
                 <div id="appLayout">
-                  {/* of course! another div will fix this! */}
                   <div className="app-container" id="mainContent">
                     <div className="main-container" id="main-container">
-                      <div id="starting-point">
-                        {/* <h1>Robot Arm Simulator</h1> */}
-                      </div>
-                      <div id="main-wrapper">
-                        <div
-                          className="task-header"
-                          id="task-bar"
-                        //style={{ margin: '1rem 0', textAlign: 'center' }}
-                        >
-                          {/* <InstructionPanel/> */}
+                      <div id="starting-point" />
 
-                          <CurrentTaskDisplay
-                            task={taskList[currentTaskIndex] || null}
+                      <div id="main-wrapper">
+                        <div className="task-header flex items-center gap-3" id="task-bar">
+                          <div className="rounded-2xl shadow px-4 py-2 flex items-center">
+                            <CurrentTaskDisplay
+                              task={taskList[currentTaskIndex] || null}
+                              index={currentRealIndex}
+                              total={realTasks.length}
+                              showProgress={showProgress}
+                            />
+                          </div>
+
+                          <ProgressPie
                             index={currentRealIndex}
                             total={realTasks.length}
                             showProgress={showProgress}
+                            size={56}
+                            strokeWidth={6}
                           />
                         </div>
+
                         <div id="main-items">
                           <div id="just-canvas">
                             <CanvasStage
@@ -460,75 +332,61 @@ export default function App(
                               setAngles={setAngles}
                               zones={zones}
                               setZones={setZones}
-                              curvatureGraph={curvatureGraph}
-                              noiseGraph={noiseGraph}
+                              directnessSegments={directnessSegments}
+                              tempoSegments={tempoSegments}
+                              smoothnessSegments={smoothnessSegments}
                             />
-
                           </div>
 
                           <div id="user-controls">
-                            <div id="curvaturegraph">
+                            <div id="directness-graph">
                               <GraphEditorPanel
-                                id="curvature-graph"
-                                label="Curvature"
-                                graphPoints={curvatureGraph}
-                                setGraphPoints={(points) => {
-                                  setCurvatureGraph(points);
-                                  logSessionEvent({
-                                    time: Date.now(),
-                                    type: 'graphChange',
-                                    label: 'Curvature',
-                                    data: points
-                                  });
-                                }}
+                                id="directness-graph"
+                                label="C"
                                 pathPoints={pathPoints}
+                                segmentValues={directnessSegments}
+                                setSegmentValues={(vals: number[]) => {
+                                  setDirectnessSegments(vals);
+                                  logSessionEvent({ time: Date.now(), type: 'graphChange', label: 'Curvature', data: vals });
+                                }}
                               />
                             </div>
-                            <div id="speedgraph">
+                            <div id="tempo-graph">
                               <GraphEditorPanel
-                                id="speed-graph"
+                                id="tempo-graph"
                                 label="Speed"
-                                graphPoints={speedGraph}
-                                setGraphPoints={(points) => {
-                                  setSpeedGraph(points);
-                                  logSessionEvent({
-                                    time: Date.now(),
-                                    type: 'graphChange',
-                                    label: 'Speed',
-                                    data: points
-                                  });
-                                }}
                                 pathPoints={pathPoints}
+                                segmentValues={tempoSegments}
+                                setSegmentValues={(vals: number[]) => {
+                                  setTempoSegments(vals);
+                                  logSessionEvent({ time: Date.now(), type: 'graphChange', label: 'Speed', data: vals });
+                                }}
                               />
                             </div>
-                            <div id="noisegraph">
+                            <div id="smoothness-graph">
                               <GraphEditorPanel
-                                id="noise-graph"
-                                label="Randomness"
-                                graphPoints={noiseGraph}
-                                setGraphPoints={(points) => {
-                                  setNoiseGraph(points);
-                                  logSessionEvent({
-                                    time: Date.now(),
-                                    type: 'graphChange',
-                                    label: 'Noise',
-                                    data: points
-                                  });
-                                }}
+                                id="smoothness-graph"
+                                label="Smoothness"
                                 pathPoints={pathPoints}
+                                segmentValues={smoothnessSegments}
+                                setSegmentValues={(vals: number[]) => {
+                                  setSmoothnessSegments(vals);
+                                  logSessionEvent({ time: Date.now(), type: 'graphChange', label: 'Smoothness', data: vals });
+                                }}
                               />
                             </div>
                           </div>
                         </div>
+
                         <div className="user-buttons">
                           <button
-                            className="user-buttons" id="clear-points-button"
+                            className="user-buttons"
+                            id="clear-points-button"
                             onClickCapture={() => {
-                              // Clear user-added path points
-                              setPathPoints([
-                                START_POINT,
-                                END_POINT
-                              ]);
+                              setPathPoints([START_POINT, END_POINT]);
+                              setDirectnessSegments(initSegmentValuesForPath([START_POINT, END_POINT], 0));
+                              setTempoSegments(initSegmentValuesForPath([START_POINT, END_POINT], 0));
+                              setSmoothnessSegments(initSegmentValuesForPath([START_POINT, END_POINT], 0));
                             }}
                           >
                             Clear
@@ -537,90 +395,59 @@ export default function App(
                           <PlayButton id="play-button" onClick={handlePlay} />
 
                           <button
-                            className="user-buttons" id="next-task-button"
+                            className="user-buttons"
+                            id="next-task-button"
                             onClickCapture={() => {
-                              // Clear user-added path points
-                              setPathPoints([
-                                START_POINT,
-                                END_POINT
-                              ]);
-
-                              // reset visited status on zones too
+                              setPathPoints([START_POINT, END_POINT]);
                               setZones(z => z.map(zone => ({ ...zone, visited: false })));
-
-                              // Go to next task
-                              setCurrentTaskIndex(i =>
-                                Math.min(i + 1, taskList.length - 1)
-                              );
+                              setCurrentTaskIndex(i => Math.min(i + 1, taskList.length - 1));
                             }}
                             disabled={currentTaskIndex >= taskList.length - 1}
                           >
                             Next
                           </button>
                         </div>
-
                       </div>
                     </div>
-                    {/* Help Button */}
+
                     <HelpButton
                       id="help-button"
                       onReplayTutorial={() => {
-                        // normal open: will be blocked if completed; ask user if they want to force
-                        const alreadyCompleted = !!sessionStorage.getItem("tutorialCompleted");
+                        const alreadyCompleted = !!sessionStorage.getItem('tutorialCompleted');
                         if (alreadyCompleted) {
                           const ok = window.confirm("You've already completed the tutorial this session. Replay it? This will reset your tutorial answers for this session.");
-                          if (!ok) {
-                            console.log("[Tutorial] Replay canceled by user (already completed)");
-                            return;
-                          }
-                          // user confirmed: force open and clear previous answers
-                          sessionStorage.removeItem("tutorialCompleted");
-                          sessionStorage.removeItem("chosenSize");
-                          sessionStorage.removeItem("taskList");
-                          sessionStorage.removeItem("hasProlific");
-                          sessionStorage.removeItem("prolificID");
+                          if (!ok) return;
+                          sessionStorage.removeItem('tutorialCompleted');
+                          sessionStorage.removeItem('chosenSize');
+                          sessionStorage.removeItem('taskList');
+                          sessionStorage.removeItem('hasProlific');
+                          sessionStorage.removeItem('prolificID');
                           setTutorialCompleted(false);
                         }
                         openTutorial({ force: true });
                       }}
                     />
 
-
-                    {/* ABOvE: NEED TO FIX... */}
-                    {/* Dev Menu overlay */}
                     <DevMenu
                       isOpen={devMenuOpen}
                       onClose={() => setDevMenuOpen(false)}
                       onDone={() => setDevMenuOpen(false)}
-                      toggleRoboticLook={(enabled) => {
-                        console.log('Robotic Look:', enabled);
-                      }}
+                      toggleRoboticLook={(enabled) => { console.log('Robotic Look:', enabled); }}
                       totalDuration={totalDuration}
                       setTotalDuration={setTotalDuration}
                       onTasksLoaded={(tasks) => {
-                        console.log('App received tasks from DevMenu:', tasks);
                         setTaskList(tasks);
                         setCurrentTaskIndex(0);
                       }}
                       addAvoidZone={() => {
                         const newZone = addZone('avoid');
                         setSessionLog(prev => ({ ...prev, zones: [...prev.zones, newZone] }));
-                        logSessionEvent({
-                          time: Date.now(),
-                          type: 'addZone',
-                          label: 'avoid',
-                          data: newZone
-                        });
+                        logSessionEvent({ time: Date.now(), type: 'addZone', label: 'avoid', data: newZone });
                       }}
                       addRequiredZone={() => {
                         const newZone = addZone('required');
                         setSessionLog(prev => ({ ...prev, zones: [...prev.zones, newZone] }));
-                        logSessionEvent({
-                          time: Date.now(),
-                          type: 'addZone',
-                          label: 'required',
-                          data: newZone
-                        });
+                        logSessionEvent({ time: Date.now(), type: 'addZone', label: 'required', data: newZone });
                       }}
                       replayMotion={replayMotion}
                       setZones={setZones}
@@ -632,43 +459,25 @@ export default function App(
                       loadMotionLog={loadMotionLog}
                       loadSessionLog={loadSessionLog}
                     />
-
                   </div>
-                  {/* Tutorial Overlay */}
-                  {showStartSequence && !tutorialCompleted && (
-                    <StartSequenceManager
-                      //tutorialSteps={tutorialSteps}
-                      onComplete={() => {
-                        // mark completed and hide overlay (idempotent)
-                        console.log("[Tutorial] onComplete called - marking tutorial completed this session");
-                        setShowStartSequence(false);
-                        setTutorialCompleted(true);
-                        sessionStorage.setItem("tutorialCompleted", "1");
-                      }}
-                      resetSignal={resetTutorialSignal}
-                      hasChosenSize={hasChosenSize}              // pass down
-                      onSizeChosen={(size) => {
-                        setHasChosenSize(true);
-                        const chosenTasks = pickTasks(allPrompts, size);
-                        setTaskList(chosenTasks);
-                        setCurrentTaskIndex(0);
-                        sessionStorage.setItem("taskList", JSON.stringify(chosenTasks));
-                        // persist chosenSize so reloads can bootstrap
-                        sessionStorage.setItem("chosenSize", size);
-                      } // callback
-                      }
-                    />
-                  )}
                 </div>
+              )}
 
+              {showTutorial && (
+                <Tutorial
+                  participantId={userId}
+                  onComplete={() => {
+                    setShowTutorial(false);
+                    setTutorialCompleted(true);
+                    sessionStorage.setItem('tutorialCompleted', '1');
+                    if (!started) setStarted(true);
+                  }}
+                />
               )}
             </div>
           } />
-        {/* Markdown Viewer */}
-        <Route path="/asset-help" element={
-          <MarkdownViewer filePath="AssetHelp.markdown" />
-        } />
+        <Route path="/asset-help" element={<MarkdownViewer filePath="AssetHelp.markdown" />} />
       </Routes>
-    </HashRouter >
+    </HashRouter>
   );
 }

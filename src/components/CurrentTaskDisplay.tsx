@@ -10,18 +10,18 @@ interface CurrentTaskDisplayProps {
 
 export const CurrentTaskDisplay: React.FC<CurrentTaskDisplayProps> = ({
   task,
-  index,
-  total,
-  showProgress,
+  //index,
+  //total,
+  //showProgress,
 }) => {
   return (
     <div className="task-display">
       <h2>Current Task: {task || 'No task loaded'}</h2>
-      {showProgress && (
+      {/* {showProgress && (
         <p>
           Task {index + 1} of {total}
         </p>
-      )}
+      )} */}
     </div>
   );
 };

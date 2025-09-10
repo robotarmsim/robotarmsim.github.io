@@ -8,6 +8,7 @@ export interface MotionLogEntry {
   position: { x: number; y: number };
   angles: [number, number];
   speed: number;
+  speedFraction?: number;
   velocity: number;
   noise: number;
 

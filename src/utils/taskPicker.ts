@@ -1,3 +1,4 @@
+// this was for BIG SET idea...
 // utils/taskPicker.ts
 export const taskSizeMap: Record<"small" | "medium" | "large", number> = {
   small: 5,

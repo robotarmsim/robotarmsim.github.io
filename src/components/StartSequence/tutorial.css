@@ -1,272 +1,88 @@
-/* ========================= */
-/* Backdrop (dimming layer) */
-/* ========================= */
-.tutorial-backdrop {
+/* Dim background */
+.tutorial-overlay {
   position: fixed;
   inset: 0;
-  z-index: 9998;
-  background: rgba(0,0,0,0.6);
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 1000;
   pointer-events: none;
-
-  -webkit-mask: var(--tutorial-mask);
-  -webkit-mask-repeat: no-repeat;
-  -webkit-mask-composite: destination-out;
-  mask: var(--tutorial-mask);
-  mask-repeat: no-repeat;
-  mask-composite: exclude;
-
-  transition: all 200ms ease;
 }
 
-/* ========================= */
-/* Highlighted rectangle */
-/* ========================= */
-.tutorial-highlight-rect {
-  position: fixed;
-  pointer-events: none;
-  z-index: 9999;
-
-  border: 2px solid #ffd966;
+/* Highlight cutout */
+.tutorial-highlight {
+  position: absolute;
+  background: transparent;
   border-radius: 6px;
-  box-shadow: 0 0 0 3px rgba(255,217,102,0.15);
-  box-sizing: border-box;
-
-  transition: top 120ms linear, left 120ms linear,
-              width 120ms linear, height 120ms linear;
+  box-shadow: 0 0 0 2000px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
 }
 
-/* ========================= */
-/* Popup base styling */
-/* ========================= */
+/* Connector arrow */
+.tutorial-arrow {
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 8px solid white;
+  z-index: 1001;
+  pointer-events: none;
+}
+
+/* Popup box */
 .tutorial-popup {
-  position: fixed;
-  z-index: 10000;
-  max-width: 340px;
-  pointer-events: auto;
-  font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
-  transform: translate(-50%,-50%);
-  
-  /* keep popup from touching viewport edges */
-  top: clamp(40px, var(--tutorial-top, 50%), calc(100% - 40px));
-  left: clamp(40px, var(--tutorial-left, 50%), calc(100% - 40px));
-}
-
-.tutorial-popup-inner {
-  background: #fff;
-  color: #111;
+  position: absolute;
+  max-width: 320px;
+  background: white;
   border-radius: 10px;
-  padding: 14px 16px;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.18);
-  border: 1px solid rgba(0,0,0,0.06);
+  padding: 16px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  z-index: 1002;
+  pointer-events: auto;
 }
 
-/* ========================= */
-/* Title & text */
-/* ========================= */
+/* Text styling */
 .tutorial-title {
-  margin: 0 0 8px 0;
-  font-size: 1.05rem;
-  line-height: 1.25;
+  margin: 0 0 8px;
+  font-size: 1.1rem;
+  font-weight: 600;
 }
+
 .tutorial-text {
-  margin-bottom: 10px;
+  margin: 0 0 12px;
   font-size: 0.95rem;
+  line-height: 1.4;
   color: #333;
 }
 
-/* ========================= */
-/* Options & actions */
-/* ========================= */
-.tutorial-options,
-.tutorial-actions {
+/* Buttons */
+.tutorial-buttons {
   display: flex;
+  justify-content: flex-end;
   gap: 8px;
-  flex-wrap: wrap;
-  margin-top: 8px;
-}
-.tutorial-option,
-.tutorial-next,
-.tutorial-skip {
-  padding: 8px 12px;
-  border-radius: 8px;
-  border: 1px solid rgba(0,0,0,0.08);
-  background: #f5f7fb;
-  cursor: pointer;
-  font-size: 0.9rem;
-}
-.tutorial-next {
-  background: #2b7cff;
-  color: white;
-  border-color: transparent;
-}
-.tutorial-skip {
-  background: transparent;
-  border-color: rgba(0,0,0,0.06);
 }
 
-/* ========================= */
-/* Popup arrows */
-/* ========================= */
-.tutorial-popup.arrow-right .tutorial-popup-inner,
-.tutorial-popup.arrow-left .tutorial-popup-inner,
-.tutorial-popup.arrow-top .tutorial-popup-inner,
-.tutorial-popup.arrow-bottom .tutorial-popup-inner {
-  position: relative;
-}
-
-.tutorial-popup.arrow-right .tutorial-popup-inner::after,
-.tutorial-popup.arrow-left .tutorial-popup-inner::after,
-.tutorial-popup.arrow-top .tutorial-popup-inner::after,
-.tutorial-popup.arrow-bottom .tutorial-popup-inner::after {
-  content: "";
-  position: absolute;
-  width: 0;
-  height: 0;
-  border-style: solid;
-  pointer-events: none;
-}
-
-.tutorial-popup.arrow-right .tutorial-popup-inner::after {
-  left: -10px;
-  top: 50%;
-  transform: translateY(-50%);
-  border-width: 8px 10px 8px 0;
-  border-color: transparent #fff transparent transparent;
-  box-shadow: -4px 0 8px rgba(0,0,0,0.06);
-}
-.tutorial-popup.arrow-left .tutorial-popup-inner::after {
-  right: -10px;
-  top: 50%;
-  transform: translateY(-50%);
-  border-width: 8px 0 8px 10px;
-  border-color: transparent transparent transparent #fff;
-  box-shadow: 4px 0 8px rgba(0,0,0,0.06);
-}
-.tutorial-popup.arrow-bottom .tutorial-popup-inner::after {
-  bottom: -10px;
-  left: 50%;
-  transform: translateX(-50%);
-  border-width: 0 8px 10px 8px;
-  border-color: transparent transparent #fff transparent;
-  box-shadow: 0 -4px 8px rgba(0,0,0,0.06);
-}
-.tutorial-popup.arrow-top .tutorial-popup-inner::after {
-  top: -10px;
-  left: 50%;
-  transform: translateX(-50%);
-  border-width: 10px 8px 0 8px;
-  border-color: #fff transparent transparent transparent;
-  box-shadow: 0 4px 8px rgba(0,0,0,0.06);
-}
-
-
-/* container for option buttons */
-.tutorial-options {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-/* the option buttons themselves */
-.tutorial-option {
-  padding: 8px 12px;
-  border-radius: 8px;
-  border: 1px solid rgba(0,0,0,0.08);
-  background-color: #f5f7fb; /* light gray */
-  color: #111; /* dark text */
-  cursor: pointer;
-  font-size: 0.9rem;
-  transition: background 150ms ease, color 150ms ease;
-}
-
-.tutorial-option:hover {
-  background-color: #e0e5f0; /* slightly darker on hover */
-  color: #000;
-}
-
-/* Skip button styling */
 .tutorial-skip {
   background-color: transparent;
   color: #555;
-  border: 1px solid rgba(0,0,0,0.06);
-  border-radius: 8px;
-  padding: 8px 12px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  border-radius: 6px;
+  padding: 6px 10px;
   cursor: pointer;
 }
 
 .tutorial-skip:hover {
-  background-color: rgba(0,0,0,0.05);
+  background-color: rgba(0, 0, 0, 0.05);
   color: #111;
 }
 
-/* Next button styling */
 .tutorial-next {
-  background-color: #2b7cff; /* blue */
+  background-color: #2b7cff;
   color: #fff;
   border: none;
-  border-radius: 8px;
-  padding: 8px 12px;
+  border-radius: 6px;
+  padding: 6px 12px;
   cursor: pointer;
 }
 
 .tutorial-next:hover {
-  background-color: #1a5fd1; /* darker blue on hover */
-}
-
-
-/* ========================= */
-/* Centered popup (no arrow) */
-/* ========================= */
-.tutorial-popup-centered {
-  top: 50% !important;
-  left: 50% !important;
-  transform: translate(-50%, -50%) !important;
-  max-width: 480px;
-}
-
-.tutorial-popup-centered .tutorial-popup-inner {
-  text-align: center;
-  padding: 24px 28px;
-}
-
-.tutorial-popup-centered .tutorial-options {
-  justify-content: center;
-  margin-top: 16px;
-}
-
-.tutorial-popup-centered .tutorial-option {
-  font-size: 1rem;
-  padding: 12px 18px;
-  min-width: 120px;
-}
-
-.tutorial-prolific-input {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  margin-top: 1rem;
-  gap: 0.5rem;
-}
-
-.tutorial-prolific-input input {
-  padding: 0.5rem;
-  border: 1px solid #ccc;
-  border-radius: 6px;
-  width: 80%;
-  max-width: 300px;
-  text-align: center;
-}
-
-.tutorial-prolific-input button {
-  padding: 0.5rem 1rem;
-  border: none;
-  background: #4caf50;
-  color: white;
-  border-radius: 6px;
-  cursor: pointer;
-}
-
-.tutorial-prolific-input button:hover {
-  background: #45a049;
+  background-color: #1a5fd1;
 }

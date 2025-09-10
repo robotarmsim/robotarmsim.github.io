@@ -1,0 +1,35 @@
+/* src/tw-utils.css — v4 style: declare a btn utility then reuse it */
+@import "tailwindcss";
+
+/* Define a reusable utility (v4 CSS-first style) */
+@utility btn {
+  @apply inline-flex items-center justify-center rounded-md font-medium transition-colors;
+}
+
+/* Now reuse it safely */
+.btn-ghost {
+  @apply btn px-3 py-1 text-sm bg-transparent border border-white/10 text-white/80 hover:bg-white/5;
+}
+
+.btn-primary {
+  @apply btn px-4 py-2 bg-indigo-600 text-white shadow hover:bg-indigo-700;
+}
+
+.btn-danger {
+  @apply btn px-4 py-2 bg-red-600 text-white shadow hover:bg-red-700;
+}
+
+/* Small components */
+.card {
+  @apply rounded-lg p-4 bg-white/5 border border-white/6 shadow-md;
+}
+
+.panel { @apply bg-white/4 border border-white/6 rounded-lg p-3; }
+
+.task-header-compact {
+  @apply px-4 py-2 rounded-lg text-sm font-semibold bg-gradient-to-r from-indigo-700 to-indigo-500 text-white shadow;
+}
+
+.dev-open-btn { @apply fixed bottom-4 right-4 z-[1100] bg-orange-600 text-white px-4 py-2 rounded-md shadow-lg; }
+.zoneButton { @apply px-3 py-1 rounded-md bg-white/6 text-white/90 shadow; }
+.btn-bar { @apply flex items-center gap-4 justify-center; }

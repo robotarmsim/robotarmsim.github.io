@@ -99,24 +99,24 @@ export function getTutorialSteps(): TutorialStep[] {
       skipButton: true,
       type: "step",
     },
-    {
-      id: "motion-set-size",
-      type: "step",
-      skipButton: false,
-      title: "Choose Motion Set Size",
-      text: "Before we begin, how many motions would you like to design?",
-      options: [
-        { label: "Small set (2 to 5)", value: "small" },
-        { label: "Medium set (5 to 10)", value: "medium" },
-        { label: "Large set (10+)", value: "large" },
-      ],
-      centered: true,
-      shouldSkip: ({ hasChosenSize }: { hasChosenSize?: boolean }) => !!hasChosenSize,
-      onSelect: (value: string, setHasChosenSize?: (v: boolean) => void) => {
-        console.log("Size option selected:", value);
-        setHasChosenSize?.(true);
-      },
-    },
+    // {
+    //   id: "motion-set-size",
+    //   type: "step",
+    //   skipButton: false,
+    //   title: "Choose Motion Set Size",
+    //   text: "Before we begin, how many motions would you like to design?",
+    //   options: [
+    //     { label: "Small set (2 to 5)", value: "small" },
+    //     { label: "Medium set (5 to 10)", value: "medium" },
+    //     { label: "Large set (10+)", value: "large" },
+    //   ],
+    //   centered: true,
+    //   shouldSkip: ({ hasChosenSize }: { hasChosenSize?: boolean }) => !!hasChosenSize,
+    //   onSelect: (value: string, setHasChosenSize?: (v: boolean) => void) => {
+    //     console.log("Size option selected:", value);
+    //     setHasChosenSize?.(true);
+    //   },
+    // },
     {
       id: "final",
       type: "step",

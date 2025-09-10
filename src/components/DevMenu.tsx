@@ -53,6 +53,29 @@ const DevMenu: React.FC<DevMenuProps> = ({
     replayMotion,
     setZones,
 }) => {
+
+    // presets to choose from
+    const availablePresets = ["preset-1-laban.csv", "preset-3-metaphor.csv"];
+
+    useEffect(() => {
+        // only run once on mount
+        const randomPreset = availablePresets[Math.floor(Math.random() * availablePresets.length)];
+        setSelectedPreset(randomPreset);
+
+        // auto-load it
+        const load = async () => {
+            const response = await fetch(`/presets/${randomPreset}`);
+            const text = await response.text();
+            const lines = text
+                .split('\n')
+                .map(l => l.trim())
+                .filter(l => l.length > 0);
+            setRawTasks(lines.map(l => l.split(',')[0].trim()));
+        };
+
+        load();
+    }, []);
+
     // raw task list and preview rows
     const [rawTasks, setRawTasks] = useState<string[]>([]);
     const [csvRows, setCsvRows] = useState<string[][]>([]);
@@ -61,7 +84,7 @@ const DevMenu: React.FC<DevMenuProps> = ({
     const [randomOrder, setRandomOrder] = useState(false);
     const [interruptionEnabled, setInterruptionEnabled] = useState(false);
     const [interruptionInterval, setInterruptionInterval] = useState(1);
-    const [showProgressLocal, setShowProgressLocal] = useState(false);
+    const [showProgressLocal, setShowProgressLocal] = useState(true); // true for the pie
     const [selectedPreset, setSelectedPreset] = useState<string | null>(null);
 
     // whenever rawTasks or options change, recompute rows and notify parent
