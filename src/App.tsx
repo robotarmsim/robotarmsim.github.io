@@ -1,9 +1,14 @@
 // src/App.tsx
+// App (updated: removed smoothnessSegments and related UI)
+// Notes:
+// - I removed all smoothness segment state and the Smoothness graph.
+// - PathParameterMap usage uses only directness & tempo curves now.
+
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { RobotArm, type Point } from './utils/RobotArm';
 import { CanvasStage } from './components/CanvasStage';
 import DevMenu from './components/DevMenu';
-import { GraphEditorPanel } from './components/GraphEditorPanel-v2';
+import GraphEditorPanel from './components/GraphEditorPanel-v2';
 import { PlayButton } from './components/UI/PlayButton';
 import useMotionEngine from './hooks/useMotionEngine';
 import { useZones } from './types/zones';
@@ -35,7 +40,7 @@ import {
   pointGraphFromSegmentValues,
 } from './utils/segmentUtils';
 
-// Use the PathParameterMap class (constructor takes pathPoints: Point[])
+// PathParameterMap still exists but no smoothness curve internally
 import PathParameterMap from './utils/PathParameterMap';
 
 export default function App() {
@@ -123,47 +128,28 @@ export default function App() {
     setSessionLog,
   } = useTrackingLogs();
 
-  // --- PER-SEGMENT GRAPH STATE ---
-  // (n-1 values for n path points)
+  // --- PER-SEGMENT GRAPH STATE (NO SMOOTHNESS) ---
   const [directnessSegments, setDirectnessSegments] = useState<number[]>(() => initSegmentValuesForPath(pathPoints, 0));
   const [tempoSegments, setTempoSegments] = useState<number[]>(() => initSegmentValuesForPath(pathPoints, 0));
-  const [smoothnessSegments, setSmoothnessSegments] = useState<number[]>(() => initSegmentValuesForPath(pathPoints, 0));
 
   // sync segments when path length changes
   useEffect(() => {
     setDirectnessSegments(prev => resampleSegmentsToPath(prev, pathPoints));
     setTempoSegments(prev => resampleSegmentsToPath(prev, pathPoints));
-    setSmoothnessSegments(prev => resampleSegmentsToPath(prev, pathPoints));
   }, [pathPoints.length]);
 
-  /**
-   * Build & maintain a PathParameterMap instance.
-   *
-   * Important:
-   * - PathParameterMap constructor takes the pathPoints array.
-   * - We convert per-segment arrays (what the GraphEditor produces)
-   *   into vertex control-points using pointGraphFromSegmentValues,
-   *   then store those control points into the PathParameterMap using
-   *   the typed setters (setDirectnessPoints / setTempoPoints / setSmoothnessPoints).
-   *
-   * This keeps your UI editing (segment arrays) and runtime evaluation (PathParameterMap)
-   * in sync without changing how GraphEditorPanel works.
-   */
+  // Build & maintain a PathParameterMap instance (only directness & tempo now)
   const pathMap = useMemo(() => {
     const pm = new PathParameterMap(pathPoints);
 
-    // convert per-segment data -> vertex graph control points
-    const directCP = pointGraphFromSegmentValues(directnessSegments, pathPoints); // [{x,y},...]
+    const directCP = pointGraphFromSegmentValues(directnessSegments, pathPoints);
     const tempoCP = pointGraphFromSegmentValues(tempoSegments, pathPoints);
-    const smoothCP = pointGraphFromSegmentValues(smoothnessSegments, pathPoints);
 
-    // set them into the PathParameterMap
     pm.setDirectnessPoints(directCP);
     pm.setTempoPoints(tempoCP);
-    pm.setSmoothnessPoints(smoothCP);
 
     return pm;
-  }, [pathPoints, directnessSegments, tempoSegments, smoothnessSegments]);
+  }, [pathPoints, directnessSegments, tempoSegments]);
 
   // Robot arm
   const arm = useMemo(() => new RobotArm(ARM_BASE, LIMB_LENGTHS), []);
@@ -177,15 +163,13 @@ export default function App() {
   const lastLogTimeRef = useRef<number>(0);
   const LOG_INTERVAL_MS = 100;
 
-  // Motion engine expects objects that expose evaluate(s:number): number.
-  // PathParameterMap exposes evaluateDirectness / evaluateSmoothness / evaluateTempo.
-  // Create small wrappers that forward evaluate -> pathMap.evaluate*
+  // Motion engine maps (objects exposing evaluate(s):number)
   const directnessMap = useMemo(() => ({ evaluate: (s: number) => pathMap.evaluateDirectness(s) }), [pathMap]);
   const tempoMap = useMemo(() => ({ evaluate: (s: number) => pathMap.evaluateTempo(s) }), [pathMap]);
-  const smoothnessMap = useMemo(() => ({ evaluate: (s: number) => pathMap.evaluateSmoothness(s) }), [pathMap]);
 
   // Motion engine callback
   const onFrame = (frame: any) => {
+    console.log('[App] onFrame', { t: frame.t, pos: frame.position, angles: frame.angles });
     setRobotTip(frame.position);
     setAngles(frame.angles);
 
@@ -209,12 +193,11 @@ export default function App() {
     }
   };
 
-  // call the hook with the three parameter-maps (objects with evaluate(s):number)
+  // call the hook with the two parameter-maps (directness, tempo)
   const { play, replay, stop } = useMotionEngine({
     arm,
     directnessMap,
     tempoMap,
-    smoothnessMap,
     totalDuration,
     onFrame,
   });
@@ -334,7 +317,6 @@ export default function App() {
                               setZones={setZones}
                               directnessSegments={directnessSegments}
                               tempoSegments={tempoSegments}
-                              smoothnessSegments={smoothnessSegments}
                             />
                           </div>
 
@@ -342,7 +324,7 @@ export default function App() {
                             <div id="directness-graph">
                               <GraphEditorPanel
                                 id="directness-graph"
-                                label="C"
+                                label="Curvature"
                                 pathPoints={pathPoints}
                                 segmentValues={directnessSegments}
                                 setSegmentValues={(vals: number[]) => {
@@ -354,24 +336,12 @@ export default function App() {
                             <div id="tempo-graph">
                               <GraphEditorPanel
                                 id="tempo-graph"
-                                label="Speed"
+                                label="Tempo"
                                 pathPoints={pathPoints}
                                 segmentValues={tempoSegments}
                                 setSegmentValues={(vals: number[]) => {
                                   setTempoSegments(vals);
-                                  logSessionEvent({ time: Date.now(), type: 'graphChange', label: 'Speed', data: vals });
-                                }}
-                              />
-                            </div>
-                            <div id="smoothness-graph">
-                              <GraphEditorPanel
-                                id="smoothness-graph"
-                                label="Smoothness"
-                                pathPoints={pathPoints}
-                                segmentValues={smoothnessSegments}
-                                setSegmentValues={(vals: number[]) => {
-                                  setSmoothnessSegments(vals);
-                                  logSessionEvent({ time: Date.now(), type: 'graphChange', label: 'Smoothness', data: vals });
+                                  logSessionEvent({ time: Date.now(), type: 'graphChange', label: 'Tempo', data: vals });
                                 }}
                               />
                             </div>
@@ -386,7 +356,6 @@ export default function App() {
                               setPathPoints([START_POINT, END_POINT]);
                               setDirectnessSegments(initSegmentValuesForPath([START_POINT, END_POINT], 0));
                               setTempoSegments(initSegmentValuesForPath([START_POINT, END_POINT], 0));
-                              setSmoothnessSegments(initSegmentValuesForPath([START_POINT, END_POINT], 0));
                             }}
                           >
                             Clear

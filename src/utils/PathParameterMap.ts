@@ -1,14 +1,19 @@
 // src/utils/PathParameterMap.ts
+// PathParameterMap (updated: removed smoothness curve entirely)
+// Notes:
+// - I removed the smoothness ParamCurve and related methods since we no longer expose smoothness to the user.
+// - Path still stores pathPoints and keeps directness & tempo curves.
+
 import type { Point } from "./RobotArm";
 
-/** clamp helper */
+/** clamp helper (internal) */
 function clamp(v: number, a = -Infinity, b = Infinity) {
   return Math.max(a, Math.min(b, v));
 }
 
 /**
  * ParamCurve
- * - small, local curve class used by PathParameterMap
+ * - small curve used by PathParameterMap
  * - stores normalized control points and provides evaluate/update/get operations
  */
 class ParamCurve {
@@ -43,21 +48,17 @@ class ParamCurve {
 
 /**
  * PathParameterMap
- *
  * - owns the path geometry (pathPoints)
- * - exposes three ParamCurves: directness, smoothness, tempo
- * - exposes typed helpers to update/read each curve's control points
+ * - exposes two ParamCurves: directness, tempo
  */
 export default class PathParameterMap {
   private pathPoints: Point[];
   private _directness: ParamCurve;
-  private _smoothness: ParamCurve;
   private _tempo: ParamCurve;
 
   constructor(pathPoints: Point[]) {
     this.pathPoints = [...pathPoints];
     this._directness = new ParamCurve();
-    this._smoothness = new ParamCurve();
     this._tempo = new ParamCurve();
   }
 
@@ -74,27 +75,16 @@ export default class PathParameterMap {
   evaluateDirectness(s: number) {
     return this._directness.evaluate(s);
   }
-  evaluateSmoothness(s: number) {
-    return this._smoothness.evaluate(s);
-  }
   evaluateTempo(s: number) {
     return this._tempo.evaluate(s);
   }
 
   // --- control point setters/getters for each parameter curve ---
-  // these are intentionally small wrappers so consumers don't need to know ParamCurve internals
   setDirectnessPoints(points: { x: number; y: number }[]) {
     this._directness.updatePoints(points ?? []);
   }
   getDirectnessPoints() {
     return this._directness.points;
-  }
-
-  setSmoothnessPoints(points: { x: number; y: number }[]) {
-    this._smoothness.updatePoints(points ?? []);
-  }
-  getSmoothnessPoints() {
-    return this._smoothness.points;
   }
 
   setTempoPoints(points: { x: number; y: number }[]) {

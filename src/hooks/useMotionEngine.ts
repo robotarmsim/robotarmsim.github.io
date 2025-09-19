@@ -1,36 +1,23 @@
 // src/hooks/useMotionEngine.ts
-/**
- * useMotionEngine
- *
- * Flexible hook wrapper for MotionEngine.
- * Accepts either:
- *   - pathMap: PathParameterMap (having evaluateDirectness/evaluateTempo/evaluateSmoothness),
- * OR
- *   - directnessMap / tempoMap / smoothnessMap: objects with evaluate(s:number):number
- *
- * The hook constructs the ParamMap objects the MotionEngine expects,
- * creates a single MotionEngine instance (recreated only when `arm` changes),
- * and keeps the engine's maps + totalDuration + onFrame up-to-date as React state changes.
- */
+// useMotionEngine (stable API, no smoothness)
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useMemo, useCallback } from 'react';
 import MotionEngine, { type MotionFrame } from '../utils/MotionEngine';
 import type { RobotArm } from '../utils/RobotArm';
 import type PathParameterMap from '../utils/PathParameterMap';
 
-// A minimal shape MotionEngine expects for parameter maps
+// Minimal shape MotionEngine expects for parameter maps
 type ParamMap = { evaluate: (s: number) => number };
 
 type UseMotionEngineParams = {
   arm: RobotArm;
 
-  // Optional single path map (higher-level object)
+  // Optional higher-level map
   pathMap?: InstanceType<typeof PathParameterMap> | null;
 
-  // Or the three explicit maps (each must have evaluate(s:number):number)
+  // Or explicit maps
   directnessMap?: ParamMap | null;
   tempoMap?: ParamMap | null;
-  smoothnessMap?: ParamMap | null;
 
   totalDuration?: number;
   onFrame?: (frame: MotionFrame) => void;
@@ -42,45 +29,38 @@ export function useMotionEngine(params: UseMotionEngineParams) {
     pathMap = null,
     directnessMap = null,
     tempoMap = null,
-    smoothnessMap = null,
     totalDuration,
     onFrame,
   } = params;
 
   const engineRef = useRef<MotionEngine | null>(null);
 
-  // Helper: convert PathParameterMap -> ParamMap (object with evaluate)
-  function wrapPathMap(pm: InstanceType<typeof PathParameterMap> | null): {
-    directness?: ParamMap;
-    tempo?: ParamMap;
-    smoothness?: ParamMap;
-  } {
-    if (!pm) return {};
+  // Helper: convert PathParameterMap -> ParamMap
+  const pathWrap = useMemo(() => {
+    if (!pathMap) return {};
     return {
-      directness: { evaluate: (s: number) => pm.evaluateDirectness ? pm.evaluateDirectness(s) : 0 },
-      tempo: { evaluate: (s: number) => pm.evaluateTempo ? pm.evaluateTempo(s) : 0 },
-      smoothness: { evaluate: (s: number) => pm.evaluateSmoothness ? pm.evaluateSmoothness(s) : 0 },
-    };
-  }
+      directness: { evaluate: (s: number) => (pathMap.evaluateDirectness ? pathMap.evaluateDirectness(s) : 0) },
+      tempo: { evaluate: (s: number) => (pathMap.evaluateTempo ? pathMap.evaluateTempo(s) : 0) },
+    } as { directness?: ParamMap; tempo?: ParamMap };
+  }, [pathMap]);
 
-  // Build final maps that will be passed to MotionEngine.
-  // Priority order:
-  //  - use explicit directnessMap/tempoMap/smoothnessMap if provided
-  //  - else, if pathMap provided, wrap it
-  //  - else fallback to a noop evaluator that returns 0
-  const pathWrap = wrapPathMap(pathMap as any);
+  // final maps (memoized)
+  const finalDirectnessMap: ParamMap = useMemo(
+    () => directnessMap ?? pathWrap.directness ?? { evaluate: (_s: number) => 0 },
+    // directnessMap may be recreated by parent, but that's normal — we want to update engineMaps effect when it changes
+    [directnessMap, pathWrap.directness]
+  );
+  const finalTempoMap: ParamMap = useMemo(
+    () => tempoMap ?? pathWrap.tempo ?? { evaluate: (_s: number) => 0 },
+    [tempoMap, pathWrap.tempo]
+  );
 
-  const finalDirectnessMap: ParamMap = directnessMap ?? pathWrap.directness ?? { evaluate: (_s: number) => 0 };
-  const finalTempoMap: ParamMap = tempoMap ?? pathWrap.tempo ?? { evaluate: (_s: number) => 0 };
-  const finalSmoothnessMap: ParamMap = smoothnessMap ?? pathWrap.smoothness ?? { evaluate: (_s: number) => 0 };
-
-  // Create MotionEngine once (or when arm changes). Keep a stable instance across re-renders.
+  // Create MotionEngine once (or when arm changes). We'll update maps/duration/onFrame via separate effects.
   useEffect(() => {
-    // instantiate engine with the initial maps (we'll update maps later when they change)
+    console.log('[useMotionEngine] creating engine for arm', arm);
     engineRef.current = new MotionEngine(arm, {
       directnessMap: finalDirectnessMap,
       tempoMap: finalTempoMap,
-      smoothnessMap: finalSmoothnessMap,
       totalDuration,
       segments: 24,
       minSpeed: 6,
@@ -90,50 +70,67 @@ export function useMotionEngine(params: UseMotionEngineParams) {
       curvatureBaseScale: 1.0,
     });
 
-    // if caller passed an onFrame, set it
-    if (onFrame && engineRef.current) engineRef.current.setOnFrame(onFrame);
+    if (onFrame && engineRef.current) {
+      engineRef.current.setOnFrame(onFrame);
+    }
 
-    // cleanup
     return () => {
       engineRef.current?.destroy();
       engineRef.current = null;
+      console.log('[useMotionEngine] destroyed engine for arm cleanup');
     };
-    // intentionally only recreate when the RobotArm instance changes.
-    // callers may change the maps rapidly; we just call updateMaps below to avoid re-instantiation.
+    // recreate only when RobotArm instance changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [arm]);
 
-  // Keep maps up-to-date whenever they change
+  // Keep maps & duration up-to-date on engine
   useEffect(() => {
     if (!engineRef.current) return;
     engineRef.current.updateMaps({
       directnessMap: finalDirectnessMap,
       tempoMap: finalTempoMap,
-      smoothnessMap: finalSmoothnessMap,
     });
-    // also keep totalDuration in sync
     if (typeof totalDuration === 'number') engineRef.current.setTotalDuration(totalDuration);
-  }, [finalDirectnessMap, finalTempoMap, finalSmoothnessMap, totalDuration]);
+  }, [finalDirectnessMap, finalTempoMap, totalDuration]);
 
-  // Keep onFrame up-to-date
+  // Keep onFrame callback current
   useEffect(() => {
     if (!engineRef.current) return;
-    if (onFrame) engineRef.current.setOnFrame(onFrame);
+    if (onFrame) {
+      engineRef.current.setOnFrame(onFrame);
+    } else {
+      // If parent removed its onFrame, clear callback to avoid stale calls
+      engineRef.current.setOnFrame(() => {});
+    }
   }, [onFrame]);
 
-  // control wrappers
-  const play = (pathPoints: any[], opts?: { totalDuration?: number }) => {
-    engineRef.current?.play(pathPoints, opts);
-  };
+  // stable play/replay/stop (useCallback ensures identity stability)
+  const play = useCallback((pathPoints: any[], opts?: { totalDuration?: number }) => {
+    const engine = engineRef.current;
+    if (!engine) {
+      console.warn('[useMotionEngine] play called but engine not initialized yet');
+      return;
+    }
+    // ensure onFrame is wired right before play (in case parent provided it after initial mount)
+    if (onFrame) engine.setOnFrame(onFrame);
+    engine.play(pathPoints, opts);
+  }, [onFrame]);
 
-  const replay = (frames: any[], opts?: { totalDuration?: number }) => {
-    engineRef.current?.replay(frames, opts);
-  };
+  const replay = useCallback((frames: any[], opts?: { totalDuration?: number }) => {
+    const engine = engineRef.current;
+    if (!engine) {
+      console.warn('[useMotionEngine] replay called but engine not initialized yet');
+      return;
+    }
+    if (onFrame) engine.setOnFrame(onFrame);
+    engine.replay(frames, opts);
+  }, [onFrame]);
 
-  const stop = () => {
+  const stop = useCallback(() => {
     engineRef.current?.stop();
-  };
+  }, []);
 
+  // Expose stable API
   return { play, replay, stop, engineRef };
 }
 
