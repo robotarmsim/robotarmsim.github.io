@@ -1,9 +1,11 @@
 // src/components/CanvasStage.tsx
-// Canvas stage (updated: removed user-controllable "smoothness")
-// Notes:
-// - I removed smoothnessSegments and anything the user can edit for "smoothness".
-// - I keep a fixed corner post-processor so corners are reasonable in previews.
-// - Everything else (pointer handling, zones, tempo visualization, tip trail) is preserved.
+// Canvas stage (updated: unified sampling + tempo/velocity visualization)
+//
+// - Samples the bezier spline and computes tempo/velocity using the same
+//   algorithm MotionEngine uses, so the visual path matches playback.
+// - Renders variable stroke width (based on velocity), mini-sample points,
+//   and a curvature overlay (positive vs negative).
+// - Keeps pointer handling, zones, tip trail, and control points behavior.
 
 import React, { useRef, useEffect, useState, useMemo } from 'react';
 import { RobotArm, type Point } from '../utils/RobotArm';
@@ -37,14 +39,11 @@ interface CanvasStageProps {
   setAngles: React.Dispatch<React.SetStateAction<[number, number]>>;
   zones: Zone[];
   setZones: React.Dispatch<React.SetStateAction<Zone[]>>;
-  directnessSegments: number[]; // kept: user edits curvature per-segment
-  tempoSegments: number[];      // kept: user edits tempo per-segment
+  directnessSegments: number[]; // user edits curvature per-segment
+  tempoSegments: number[];      // user edits tempo per-segment
 }
 
-/**
- * Helper that builds a tiny "ParamMap" object from per-segment values.
- * This mirrors the previous SegmentParameterMap.evaluate(s) semantics but avoids importing the class.
- */
+// Minimal per-segment evaluator builder (same as in App originally)
 function makeSegmentEvaluator(segmentValues: number[], pathPoints: Point[]) {
   return {
     evaluate: (s: number) => {
@@ -58,6 +57,263 @@ function makeSegmentEvaluator(segmentValues: number[], pathPoints: Point[]) {
       const v1 = segmentValues[segIdx + 1] ?? v0;
       return v0 * (1 - localT) + v1 * localT;
     }
+  };
+}
+
+/**
+ * Tempo warp helper (kept consistent with MotionEngine.applyTempoWarp)
+ */
+function applyTempoWarp(t: number, intensity: number) {
+  if (intensity === 0) return t;
+  const amp = 2.5;
+  const i = Math.max(-1, Math.min(1, intensity));
+  if (i > 0) return Math.pow(t, 1 + i * amp);
+  return 1 - Math.pow(1 - t, 1 + Math.abs(i) * amp);
+}
+
+/**
+ * Compute a trajectory from pathPoints + maps.
+ *
+ * This mirrors the MotionEngine.buildSchedule logic so CanvasStage
+ * draws exactly the same samples, tempo/velocity and times the engine uses.
+ */
+function computeTrajectory(
+  pathPoints: Point[],
+  directnessMap: { evaluate: (s: number) => number },
+  tempoMap: { evaluate: (s: number) => number },
+  opts?: {
+    samplesPerSegment?: number;
+    minSpeed?: number;
+    maxSpeed?: number;
+    accelBase?: number;
+    curvatureBaseScale?: number;
+    totalDuration?: number | undefined;
+  }
+) {
+  const samplesPerSegment = opts?.samplesPerSegment ?? 24;
+  const minSpeed = opts?.minSpeed ?? 6;
+  const maxSpeed = opts?.maxSpeed ?? 220;
+  const accelBase = opts?.accelBase ?? 1200;
+  const curvatureBaseScale = opts?.curvatureBaseScale ?? 1.0;
+  const totalDuration = opts?.totalDuration;
+
+  // 1) Sample bezier spline with curvature function
+  const curvatureFn = (segmentPos: number) => {
+    const dIntensity = Math.max(-1, Math.min(1, directnessMap.evaluate(segmentPos) || 0));
+    return dIntensity * curvatureBaseScale;
+  };
+
+  const rawSamples = bezierSpline(pathPoints, samplesPerSegment, curvatureFn);
+  const nRaw = rawSamples.length;
+  if (!rawSamples || nRaw === 0) {
+    return {
+      samples: [] as Point[],
+      sSamples: [] as number[],
+      tempoSamples: [] as number[],
+      times: [] as number[],
+      velocities: [] as number[],
+      curvatures: [] as number[],
+    };
+  }
+
+  // compute sSamples (normalized arc positions along rawSamples)
+  const distsSamples: number[] = new Array(nRaw).fill(0);
+  for (let i = 1; i < nRaw; i++) {
+    distsSamples[i] = Math.hypot(rawSamples[i].x - rawSamples[i - 1].x, rawSamples[i].y - rawSamples[i - 1].y);
+  }
+  const cumSamples: number[] = new Array(nRaw).fill(0);
+  for (let i = 1; i < nRaw; i++) cumSamples[i] = cumSamples[i - 1] + distsSamples[i];
+  const totalSamplesLen = cumSamples[nRaw - 1] || 1e-6;
+  const sSamples = cumSamples.map(d => d / totalSamplesLen);
+
+  // 2) Corner processing (fixed behavior) - same approach MotionEngine used
+  // We'll implement identical gaussian-window blur around each vertex's nearest sample.
+  function applyCornerProcessing(samples: Point[], pathPts: Point[], sSmpls: number[]) {
+    const nSamplesLocal = samples.length;
+    if (nSamplesLocal === 0) return samples.map(p => ({ x: p.x, y: p.y }));
+
+    // original control vertex normalized positions along polyline
+    const origDists: number[] = new Array(pathPts.length).fill(0);
+    for (let i = 1; i < pathPts.length; i++) {
+      const dx = pathPts[i].x - pathPts[i - 1].x;
+      const dy = pathPts[i].y - pathPts[i - 1].y;
+      origDists[i] = origDists[i - 1] + Math.hypot(dx, dy);
+    }
+    const origTotal = origDists[origDists.length - 1] || 1e-6;
+    const origS = origDists.map(d => d / origTotal);
+
+    const out = samples.map(p => ({ x: p.x, y: p.y }));
+    const maxWindowSamples = Math.max(2, Math.round(samplesPerSegment * 0.6));
+    const blurSigmaBase = Math.max(0.6, samplesPerSegment * 0.12);
+    const cornerSmoothingStrength = 0.7; // fixed (close to MotionEngine)
+
+    for (let pi = 1; pi < pathPts.length - 1; pi++) {
+      const sVertex = origS[pi];
+
+      // find nearest sample index
+      let centerIdx = 0;
+      let bestD = Infinity;
+      for (let si = 0; si < sSmpls.length; si++) {
+        const d = Math.abs(sSmpls[si] - sVertex);
+        if (d < bestD) {
+          bestD = d;
+          centerIdx = si;
+        }
+      }
+
+      const windowSamples = Math.max(1, Math.round(1 + cornerSmoothingStrength * maxWindowSamples));
+      const left = Math.max(0, centerIdx - windowSamples);
+      const right = Math.min(nSamplesLocal - 1, centerIdx + windowSamples);
+
+      const sigma = Math.max(0.6, blurSigmaBase * cornerSmoothingStrength);
+      const weights: number[] = [];
+      let wsum = 0;
+      for (let j = left; j <= right; j++) {
+        const didx = j - centerIdx;
+        const w = Math.exp(-0.5 * (didx * didx) / (sigma * sigma));
+        weights.push(w);
+        wsum += w;
+      }
+
+      for (let j = left; j <= right; j++) {
+        let wxSum = 0;
+        let wySum = 0;
+        let k = 0;
+        for (let m = left; m <= right; m++) {
+          const w = weights[k++];
+          wxSum += out[m].x * w;
+          wySum += out[m].y * w;
+        }
+        out[j].x = wxSum / wsum;
+        out[j].y = wySum / wsum;
+      }
+    }
+
+    return out;
+  }
+
+  const samples = applyCornerProcessing(rawSamples, pathPoints, sSamples);
+  const n = samples.length;
+  if (n === 0) {
+    return {
+      samples: [] as Point[],
+      sSamples: [] as number[],
+      tempoSamples: [] as number[],
+      times: [] as number[],
+      velocities: [] as number[],
+      curvatures: [] as number[],
+    };
+  }
+
+  // arc distances + normalized s for processed samples
+  const dists: number[] = new Array(n).fill(0);
+  for (let i = 1; i < n; i++) {
+    dists[i] = Math.hypot(samples[i].x - samples[i - 1].x, samples[i].y - samples[i - 1].y);
+  }
+  const cumDist: number[] = new Array(n).fill(0);
+  for (let i = 1; i < n; i++) cumDist[i] = cumDist[i - 1] + dists[i];
+  const totalLength = cumDist[n - 1] || 1e-6;
+  const sNorm: number[] = new Array(n);
+  for (let i = 0; i < n; i++) sNorm[i] = totalLength === 0 ? 0 : cumDist[i] / totalLength;
+
+  // TEMPO warp u(s)
+  const uWarp: number[] = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const intensity = tempoMap.evaluate(sNorm[i]);
+    uWarp[i] = applyTempoWarp(sNorm[i], intensity);
+  }
+
+  // du/ds finite differences
+  const du_ds: number[] = new Array(n).fill(0);
+  for (let i = 0; i < n; i++) {
+    if (i === 0) {
+      const ds = Math.max(1e-6, sNorm[i + 1] - sNorm[i]);
+      du_ds[i] = (uWarp[i + 1] - uWarp[i]) / ds;
+    } else if (i === n - 1) {
+      const ds = Math.max(1e-6, sNorm[i] - sNorm[i - 1]);
+      du_ds[i] = (uWarp[i] - uWarp[i - 1]) / ds;
+    } else {
+      const ds = Math.max(1e-6, sNorm[i + 1] - sNorm[i - 1]);
+      du_ds[i] = (uWarp[i + 1] - uWarp[i - 1]) / ds;
+    }
+    if (!Number.isFinite(du_ds[i])) du_ds[i] = 0;
+  }
+
+  // map derivative to 0..1 speed fraction
+  let minD = Number.POSITIVE_INFINITY, maxD = Number.NEGATIVE_INFINITY;
+  for (let i = 0; i < n; i++) {
+    if (du_ds[i] < minD) minD = du_ds[i];
+    if (du_ds[i] > maxD) maxD = du_ds[i];
+  }
+  if (!Number.isFinite(minD)) minD = 0;
+  if (!Number.isFinite(maxD)) maxD = 0;
+
+  const speedFrac: number[] = new Array(n);
+  if (Math.abs(maxD - minD) < 1e-9) {
+    for (let i = 0; i < n; i++) speedFrac[i] = 0.5;
+  } else {
+    for (let i = 0; i < n; i++) {
+      speedFrac[i] = (du_ds[i] - minD) / (maxD - minD);
+      speedFrac[i] = Math.max(0, Math.min(1, speedFrac[i]));
+    }
+  }
+
+  const vDesired = speedFrac.map(f => minSpeed + f * (maxSpeed - minSpeed));
+
+  // ACCEL LIMIT (fixed)
+  const accelLimit = new Array(n).fill(accelBase);
+
+  // velocity forward/backward passes
+  const vForward = new Array(n).fill(0);
+  vForward[0] = Math.min(vDesired[0], maxSpeed);
+  for (let i = 0; i < n - 1; i++) {
+    const ds = Math.max(1e-6, dists[i + 1]);
+    const a = accelLimit[i];
+    const reachable = Math.sqrt(Math.max(0, vForward[i] * vForward[i] + 2 * a * ds));
+    vForward[i + 1] = Math.min(vDesired[i + 1], reachable);
+  }
+  const v = vForward.slice();
+  v[n - 1] = Math.min(v[n - 1], vDesired[n - 1]);
+  for (let i = n - 2; i >= 0; i--) {
+    const ds = Math.max(1e-6, dists[i + 1]);
+    const a = accelLimit[i];
+    const reachableBack = Math.sqrt(Math.max(0, v[i + 1] * v[i + 1] + 2 * a * ds));
+    v[i] = Math.min(v[i], reachableBack);
+  }
+
+  // integrate times
+  const times: number[] = new Array(n).fill(0);
+  let cumulative = 0;
+  times[0] = 0;
+  for (let i = 0; i < n - 1; i++) {
+    const ds = Math.max(1e-6, dists[i + 1]);
+    const vi = Math.max(1e-6, v[i]);
+    const vj = Math.max(1e-6, v[i + 1]);
+    const dt = ds / ((vi + vj) / 2);
+    cumulative += dt;
+    times[i + 1] = cumulative;
+  }
+
+  let intrinsicDuration = times[n - 1] || 1e-4;
+  if (intrinsicDuration <= 0) intrinsicDuration = 1e-4;
+  const scale = (typeof totalDuration === 'number' && totalDuration > 0) ? (totalDuration / intrinsicDuration) : 1;
+  const scaledTimes = times.map(t => t * scale);
+  const scaledVelocities = v.map(val => val / scale);
+
+  // compute per-sample curvature (from directnessMap) for visualization:
+  const curvatures: number[] = sNorm.map(s => {
+    const d = directnessMap.evaluate(s) || 0;
+    return Math.max(-1, Math.min(1, d));
+  });
+
+  // done
+  return {
+    samples,
+    sSamples: sNorm,
+    tempoSamples: uWarp,
+    times: scaledTimes,
+    velocities: scaledVelocities,
+    curvatures,
   };
 }
 
@@ -102,6 +358,7 @@ export function CanvasStage({
     tipTrailRef.current = [];
   }, [pathPoints]);
 
+  // --- pointer helpers (unchanged) ---
   function getMousePos(e: React.PointerEvent): Point {
     if (!canvasRef.current) return { x: 0, y: 0 };
     const rect = canvasRef.current.getBoundingClientRect();
@@ -233,86 +490,20 @@ export function CanvasStage({
     setResizingZoneId(null);
   }
 
-  /**
-   * Fixed corner post-processing: removed user-controlled smoothness,
-   * but we keep a fixed gentle rounding so preview/runtime don't produce extreme spikes.
-   */
-  function applyCornerProcessingFixed(samples: Point[], pathPts: Point[], sSamples: number[]) {
-    const nSamples = samples.length;
-    if (nSamples === 0) return samples.slice();
-
-    const origDists: number[] = new Array(pathPts.length).fill(0);
-    for (let i = 1; i < pathPts.length; i++) {
-      const dx = pathPts[i].x - pathPts[i - 1].x;
-      const dy = pathPts[i].y - pathPts[i - 1].y;
-      origDists[i] = origDists[i - 1] + Math.hypot(dx, dy);
-    }
-    const origTotal = origDists[origDists.length - 1] || 1e-6;
-    const origS = origDists.map(d => d / origTotal);
-
-    const out = samples.map(p => ({ x: p.x, y: p.y }));
-    const lerp = (a: Point, b: Point, t: number) => ({ x: a.x * (1 - t) + b.x * t, y: a.y * (1 - t) + b.y * t });
-
-    const maxWindowSamples = Math.max(2, Math.round(Math.max(8, Math.round(nSamples * 0.06))));
-    const blurSigmaBase = Math.max(0.5, Math.max(1, Math.round(nSamples * 0.04)));
-
-    // fixed moderate smoothing strength
-    const cornerSmoothingStrength = 0.6;
-
-    for (let pi = 1; pi < pathPts.length - 1; pi++) {
-      const sVertex = origS[pi];
-
-      let centerIdx = 0;
-      let bestD = Infinity;
-      for (let si = 0; si < sSamples.length; si++) {
-        const d = Math.abs(sSamples[si] - sVertex);
-        if (d < bestD) {
-          bestD = d;
-          centerIdx = si;
-        }
-      }
-
-      const windowSamples = Math.max(1, Math.round(1 + cornerSmoothingStrength * maxWindowSamples));
-      const left = Math.max(0, centerIdx - windowSamples);
-      const right = Math.min(nSamples - 1, centerIdx + windowSamples);
-
-      // gaussian blur across window
-      const sigma = Math.max(0.6, blurSigmaBase * cornerSmoothingStrength);
-      const weights: number[] = [];
-      let wsum = 0;
-      for (let j = left; j <= right; j++) {
-        const didx = j - centerIdx;
-        const w = Math.exp(-0.5 * (didx * didx) / (sigma * sigma));
-        weights.push(w);
-        wsum += w;
-      }
-      for (let j = left; j <= right; j++) {
-        let wxSum = 0;
-        let wySum = 0;
-        let k = 0;
-        for (let m = left; m <= right; m++) {
-          const w = weights[k++];
-          wxSum += out[m].x * w;
-          wySum += out[m].y * w;
-        }
-        out[j].x = wxSum / wsum;
-        out[j].y = wySum / wsum;
-      }
-    }
-
-    return out;
-  }
-
-  // drawing constants
+  // drawing constants (adjust to taste)
+  const SAMPLES_PER_SEGMENT = 24;
   const DIRECTNESS_SCALE = 1.4;
+  const BASE_STROKE = 1.5;
+  const STROKE_SCALE = 0.02; // multiplier for velocity -> stroke width
+  const MINI_DOT_EVERY = 2; // draw larger dots every N samples
 
   function draw(ctx: CanvasRenderingContext2D) {
     ctx.clearRect(0, 0, width, height);
 
-    // robot drawing
+    // render robot arm (base positions are updated externally)
     renderRobotArm(ctx, arm.base, angles, arm.limbLengths);
 
-    // current tip & trail
+    // tip trail rendering (unchanged)
     const [angle1, angle2] = angles;
     const [l1, l2] = arm.limbLengths;
     const joint1 = { x: arm.base.x + l1 * Math.cos(angle1), y: arm.base.y + l1 * Math.sin(angle1) };
@@ -333,35 +524,76 @@ export function CanvasStage({
       ctx.stroke();
     }
 
-    // tension function uses directness only; we keep tiny positive smoothing effect by scaling curvature down when path points are "smoothed" conceptually
-    const tensionFn = (segmentNormalizedPos: number) => {
-      const d = directnessMap.evaluate(segmentNormalizedPos); // -1..1
-      const curvature = Math.max(-1, Math.min(1, d * DIRECTNESS_SCALE));
-      return curvature;
-    };
+    // Build the trajectory using the shared computation
+    const trajectory = computeTrajectory(
+      pathPoints,
+      { evaluate: (s: number) => directnessMap.evaluate(s) * DIRECTNESS_SCALE },
+      tempoMap,
+      {
+        samplesPerSegment: SAMPLES_PER_SEGMENT,
+        minSpeed: 6,
+        maxSpeed: 220,
+        accelBase: 1200,
+        curvatureBaseScale: 1.0,
+      }
+    );
 
-    // preview spline (20 samples per segment)
-    const rawCurve = bezierSpline(pathPoints, 20, tensionFn);
+    const { samples, velocities, curvatures } = trajectory;
 
-    // compute sSamples
-    const distsS: number[] = new Array(rawCurve.length).fill(0);
-    for (let i = 1; i < rawCurve.length; i++) {
-      distsS[i] = Math.hypot(rawCurve[i].x - rawCurve[i - 1].x, rawCurve[i].y - rawCurve[i - 1].y);
-    }
-    const cumS: number[] = new Array(rawCurve.length).fill(0);
-    for (let i = 1; i < rawCurve.length; i++) cumS[i] = cumS[i - 1] + distsS[i];
-    const totalS = cumS[rawCurve.length - 1] || 1e-6;
-    const sSamples = cumS.map(d => d / totalS);
+    // draw the path using per-sample velocities for stroke width
+    if (samples.length > 1) {
+      // draw a thin curvature-colour overlay first (optional subtle)
+      ctx.beginPath();
+      for (let i = 0; i < samples.length - 1; i++) {
+        const pA = samples[i];
+        const pB = samples[i + 1];
+        const c = curvatures[i] ?? 0;
+        // map curvature to color (negative -> red-ish, positive -> blue-ish)
+        const alpha = 0.22;
+        ctx.strokeStyle = c < 0 ? `rgba(249,115,115,${alpha})` : `rgba(96,165,250,${alpha})`;
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(pA.x, pA.y);
+        ctx.lineTo(pB.x, pB.y);
+        ctx.stroke();
+      }
 
-    // apply FIXED corner processing (user can't set smoothness anymore)
-    const smoothCurve = applyCornerProcessingFixed(rawCurve, pathPoints, sSamples);
+      // main variable-width stroke by drawing small segments
+      for (let i = 0; i < samples.length - 1; i++) {
+        const pA = samples[i];
+        const pB = samples[i + 1];
+        const vel = velocities[i] ?? 1;
+        const strokeW = Math.max(0.8, BASE_STROKE + vel * STROKE_SCALE);
+        const tempoVal = 0.5; // not directly used here (vel already encodes tempo)
+        const alpha = 0.35 + Math.min(1, vel * 0.003); // keep alpha bounded
+        ctx.beginPath();
+        ctx.strokeStyle = `rgba(10,90,220,${alpha})`;
+        ctx.lineWidth = strokeW;
+        ctx.lineCap = 'round';
+        ctx.moveTo(pA.x, pA.y);
+        ctx.lineTo(pB.x, pB.y);
+        ctx.stroke();
+      }
 
-    // tempo per-sample for visualization
-    const tempoSamples: number[] = [];
-    for (let i = 0; i < smoothCurve.length; i++) {
-      const t = i / (smoothCurve.length - 1);
-      const tempoVal = tempoMap.evaluate(t);
-      tempoSamples.push(tempoVal);
+      // mini-sample points
+      for (let i = 0; i < samples.length; i++) {
+        const p = samples[i];
+        const vel = velocities[i] ?? 1;
+        const r = (i % MINI_DOT_EVERY === 0) ? 2.2 + Math.min(3, vel * 0.002) : 1.2;
+        ctx.beginPath();
+        ctx.fillStyle = 'rgba(255,255,255,0.95)';
+        ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+        ctx.fill();
+        // inner color to hint speed
+        ctx.beginPath();
+        const innerR = r * 0.6;
+        // color by curvature sign (subtle)
+        const c = curvatures[i] ?? 0;
+        ctx.fillStyle = c < 0 ? 'rgba(220,80,80,0.95)' : 'rgba(50,120,220,0.95)';
+        ctx.arc(p.x, p.y, innerR, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
 
     // draw zones (unchanged)
@@ -397,22 +629,6 @@ export function CanvasStage({
       }
     });
 
-    // draw the path; stroke width indicates tempo (faster -> thicker)
-    for (let i = 0; i < smoothCurve.length - 1; i++) {
-      const pA = smoothCurve[i];
-      const pB = smoothCurve[i + 1];
-      const tempoVal = tempoSamples[i] ?? 0.5;
-      const strokeW = 2 + tempoVal * 6;
-      const alpha = 0.35 + tempoVal * 0.6;
-      ctx.beginPath();
-      ctx.strokeStyle = `rgba(10,90,220,${alpha})`;
-      ctx.lineWidth = strokeW;
-      ctx.lineCap = 'round';
-      ctx.moveTo(pA.x, pA.y);
-      ctx.lineTo(pB.x, pB.y);
-      ctx.stroke();
-    }
-
     // overlay control points
     pathPoints.forEach((pt, i) => {
       if (i !== 0 && i !== pathPoints.length - 1) {
@@ -446,23 +662,23 @@ export function CanvasStage({
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    console.log('[CanvasStage] draw called, angles:', angles);
+    // console.debug('[CanvasStage] draw called, angles:', angles);
     draw(ctx);
   }, [pathPoints, angles, draggingIndex, draggingZoneId, resizingZoneId, zones, directnessSegments, tempoSegments, width, height, arm]);
 
   useEffect(() => {
     // tip detection for zones (unchanged)
-    const [angle1, angle2] = angles;
+    const [angle1Local, angle2Local] = angles;
     const [l1, l2] = arm.limbLengths;
 
-    const joint1 = { x: arm.base.x + l1 * Math.cos(angle1), y: arm.base.y + l1 * Math.sin(angle1) };
-    const tip = { x: joint1.x + l2 * Math.cos(angle1 + angle2), y: joint1.y + l2 * Math.sin(angle1 + angle2) };
+    const joint1 = { x: arm.base.x + l1 * Math.cos(angle1Local), y: arm.base.y + l1 * Math.sin(angle1Local) };
+    const tipLocal = { x: joint1.x + l2 * Math.cos(angle1Local + angle2Local), y: joint1.y + l2 * Math.sin(angle1Local + angle2Local) };
 
     let isInAvoidZone = false;
     setZones(prev =>
       prev.map(zone => {
-        const dx = tip.x - zone.x;
-        const dy = tip.y - zone.y;
+        const dx = tipLocal.x - zone.x;
+        const dy = tipLocal.y - zone.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
         const inside = dist <= zone.radius;
 
