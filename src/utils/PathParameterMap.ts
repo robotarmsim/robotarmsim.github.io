@@ -1,8 +1,10 @@
 // src/utils/PathParameterMap.ts
-// PathParameterMap (updated: removed smoothness curve entirely)
+// PathParameterMap (patched)
 // Notes:
-// - I removed the smoothness ParamCurve and related methods since we no longer expose smoothness to the user.
-// - Path still stores pathPoints and keeps directness & tempo curves.
+// - Baseline is 0 (neutral), range is -1..1
+// - If no points are defined, curve evaluates to 0
+// - Directness: -1 = concave, 0 = straight baseline, 1 = convex
+// - Tempo: -1 = deceleration, 0 = constant, 1 = acceleration
 
 import type { Point } from "./RobotArm";
 
@@ -13,8 +15,8 @@ function clamp(v: number, a = -Infinity, b = Infinity) {
 
 /**
  * ParamCurve
- * - small curve used by PathParameterMap
- * - stores normalized control points and provides evaluate/update/get operations
+ * - stores normalized control points (x ∈ [0,1], y ∈ [-1,1])
+ * - evaluates linearly between points
  */
 class ParamCurve {
   private controlPoints: { x: number; y: number }[] = [];
@@ -28,8 +30,23 @@ class ParamCurve {
   }
 
   evaluate(x: number): number {
-    if (this.controlPoints.length === 0) return 0;
+    if (this.controlPoints.length === 0) {
+      // Neutral baseline when no points are set
+      return 0;
+    }
+
     x = clamp(x, 0, 1);
+
+    // If x is before the first point
+    if (x <= this.controlPoints[0].x) {
+      return this.controlPoints[0].y;
+    }
+    // If x is after the last point
+    if (x >= this.controlPoints[this.controlPoints.length - 1].x) {
+      return this.controlPoints[this.controlPoints.length - 1].y;
+    }
+
+    // Otherwise interpolate between the two surrounding points
     for (let i = 0; i < this.controlPoints.length - 1; i++) {
       const p1 = this.controlPoints[i];
       const p2 = this.controlPoints[i + 1];
@@ -38,6 +55,8 @@ class ParamCurve {
         return p1.y * (1 - t) + p2.y * t;
       }
     }
+
+    // Fallback: last point value
     return this.controlPoints[this.controlPoints.length - 1].y;
   }
 

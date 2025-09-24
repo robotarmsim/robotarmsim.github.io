@@ -1,67 +1,61 @@
-import type { Point } from './RobotArm';
+// src/utils/catmullRomSpline.ts
+import type { Point } from "./RobotArm";
 
 /**
- * Generates a smooth Catmull-Rom spline through given control points.
- * Returns an array of interpolated points (the smooth curve).
- * @param points Control points to pass through.
- * @param segments Number of segments between each pair of points (higher = smoother).
+ * Catmull–Rom spline generator with tension control.
+ *
+ * @param points - Array of control points {x, y}
+ * @param segments - Number of samples per segment
+ * @param curvatureFn - Function (segmentPos ∈ [0,1]) → tension value
+ *    tension = 0 gives loose/curvy (default Catmull-Rom)
+ *    tension > 0 tightens toward straight lines
+ *    tension < 0 exaggerates bowing
  */
-
-// type SplineOptions = {
-//   tensionFn?: (i: number) => number; // i = segment index
-//   samplesPerSegment?: number;
-// };
-
-
 export function catmullRomSpline(
   points: Point[],
   segments = 16,
-  tensionFn: (t: number) => number
+  curvatureFn: (segmentPos: number) => number = () => 0
 ): Point[] {
-  if (points.length < 2) return points;
+  if (!points || points.length < 2) return points.slice();
 
   const result: Point[] = [];
-
   const n = points.length;
 
-  function interpolate(p0: Point, p1: Point, p2: Point, p3: Point, t: number, tension: number): Point {
-  const t2 = t * t;
-  const t3 = t2 * t;
+  function sampleSegment(p0: Point, p1: Point, p2: Point, p3: Point, tension: number): Point[] {
+    const out: Point[] = [];
+    const tau = (1 - tension) / 2; // scaling factor for tangents
 
-  const h00 = 2 * t3 - 3 * t2 + 1;
-  const h10 = t3 - 2 * t2 + t;
-  const h01 = -2 * t3 + 3 * t2;
-  const h11 = t3 - t2;
+    for (let i = 0; i <= segments; i++) {
+      const t = i / segments;
+      const t2 = t * t;
+      const t3 = t2 * t;
 
-  // Tangents scaled by (1 - tension)
-  const m1x = ((1 - tension) * (p2.x - p0.x)) / 2;
-  const m1y = ((1 - tension) * (p2.y - p0.y)) / 2;
-  const m2x = ((1 - tension) * (p3.x - p1.x)) / 2;
-  const m2y = ((1 - tension) * (p3.y - p1.y)) / 2;
+      const a0 = -tau * t3 + 2 * tau * t2 - tau * t;
+      const a1 = (2 - tau) * t3 + (tau - 3) * t2 + 1;
+      const a2 = (tau - 2) * t3 + (3 - 2 * tau) * t2 + tau * t;
+      const a3 = tau * t3 - tau * t2;
 
-  return {
-    x: h00 * p1.x + h10 * m1x + h01 * p2.x + h11 * m2x,
-    y: h00 * p1.y + h10 * m1y + h01 * p2.y + h11 * m2y,
-  };
-}
+      const x = a0 * p0.x + a1 * p1.x + a2 * p2.x + a3 * p3.x;
+      const y = a0 * p0.y + a1 * p1.y + a2 * p2.y + a3 * p3.y;
+      out.push({ x, y });
+    }
+    return out;
+  }
 
-  // For each point in the original array, interpolate between neighbors
   for (let i = 0; i < n - 1; i++) {
-    // Handle boundaries by duplicating start/end points
     const p0 = points[i - 1] || points[i];
     const p1 = points[i];
     const p2 = points[i + 1];
-    const p3 = points[i + 2] || points[i + 1];
+    const p3 = points[i + 2] || p2;
 
-    const normalizedSegmentPos = i / (n - 2); // range [0, 1]
-    const tension = tensionFn(normalizedSegmentPos);
+    const segmentPos = n <= 2 ? 0 : i / (n - 2);
+    let tension = curvatureFn(segmentPos);
+    if (!Number.isFinite(tension)) tension = 0;
 
-    for (let j = 0; j < segments; j++) {
-      const t = j / segments;
-      result.push(interpolate(p0, p1, p2, p3, t, tension));
-    }
+    const samples = sampleSegment(p0, p1, p2, p3, tension);
+    if (i > 0) samples.shift(); // avoid duplicate at joint
+    result.push(...samples);
   }
 
-  result.push(points[n - 1]);
   return result;
 }

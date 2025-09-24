@@ -5,31 +5,30 @@ import type { Point } from './RobotArm';
  * Generates a sampled cubic Bezier spline through given points.
  *
  * - `points` : control points to pass through (in order).
- * - `segments` : number of samples per segment (samples include both segment endpoints).
+ * - `segments` : either:
+ *     - a number: baseline samples-per-segment (used to compute an adaptive distribution
+ *       proportional to control-segment geometric length), or
+ *     - an array<number>: explicit samples per control-segment.
  * - `curvatureFn(segmentPos)` : function that returns a signed curvature value for the segment
  *     where segmentPos is in [0,1] representing the segment's normalized position along the whole path.
- *     The returned curvature can be negative (concave) or positive (convex). Larger magnitude -> stronger handles.
  *
- * Behavior notes:
- * - Handles the degenerate 2-point case safely (no NaN).
- * - If |curvature| >= SHARP_THRESHOLD the code uses linear sampling for that segment,
- *   producing a hard/near-sharp corner at the joint (useful for angular motion).
- * - Otherwise it constructs the usual cubic Bezier using adjacent tangent estimates.
+ * Returns: Point[] (sampled points along the whole curve, endpoints included).
  */
 export function bezierSpline(
   points: Point[],
-  segments = 16,
+  segments: number | number[] = 16,
   curvatureFn: (segmentPos: number) => number = () => 0.0
 ): Point[] {
   if (!points || points.length < 2) return points.slice();
 
   const result: Point[] = [];
   const n = points.length;
+  const nSegments = Math.max(0, n - 1);
 
   // Threshold above which we treat a segment as intentionally "sharp" and do linear sampling.
   const SHARP_THRESHOLD = 0.9;
 
-  // Helper to sample a linear segment between a and b with 'segments' subdivisions (inclusive)
+  // Helper to sample a linear segment between a and b with 'segs' subdivisions (inclusive)
   function sampleLinear(a: Point, b: Point, segs: number) {
     const out: Point[] = [];
     for (let tIndex = 0; tIndex <= segs; tIndex++) {
@@ -42,6 +41,70 @@ export function bezierSpline(
     return out;
   }
 
+  // compute per-control-segment sample counts
+  let segCounts: number[] = new Array(nSegments).fill(Math.max(2, typeof segments === 'number' ? Math.round(segments) : 2));
+
+  if (Array.isArray(segments)) {
+    // provided explicit per-segment counts; clamp & ensure length
+    for (let i = 0; i < nSegments; i++) {
+      const v = segments[i] ?? segments[segments.length - 1] ?? 2;
+      segCounts[i] = Math.max(2, Math.floor(v));
+    }
+  } else {
+    // adaptive distribution proportional to geometric length
+    //  - desiredTotal approximates segments * nSegments (backwards compat)
+    const desiredTotal = Math.max(nSegments, Math.round(segments * nSegments));
+    // measure segment lengths (polyline between control points)
+    const segmentLengths: number[] = new Array(nSegments).fill(0);
+    let totalLen = 0;
+    for (let i = 0; i < nSegments; i++) {
+      const a = points[i];
+      const b = points[i + 1];
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      segmentLengths[i] = len;
+      totalLen += len;
+    }
+
+    if (totalLen <= 0) {
+      // degenerate: fallback uniform
+      for (let i = 0; i < nSegments; i++) segCounts[i] = Math.max(2, Math.round(segments));
+    } else {
+      // allocate proportionally
+      let sum = 0;
+      for (let i = 0; i < nSegments; i++) {
+        const approx = Math.max(2, Math.round((segmentLengths[i] / totalLen) * desiredTotal));
+        segCounts[i] = approx;
+        sum += segCounts[i];
+      }
+      // adjust (distribute remainder) until sums match desiredTotal but keep >=2
+      // If sum < desiredTotal, add 1 progressively to largest segments; if > desiredTotal reduce where possible.
+      if (sum < desiredTotal) {
+        // add to segments in order of descending length
+        const order = segmentLengths.map((l, idx) => ({ l, idx })).sort((a, b) => b.l - a.l);
+        let idx = 0;
+        while (sum < desiredTotal) {
+          segCounts[order[idx % order.length].idx] += 1;
+          sum++;
+          idx++;
+        }
+      } else if (sum > desiredTotal) {
+        const order = segmentLengths.map((l, idx) => ({ l, idx })).sort((a, b) => a.l - b.l); // reduce smallest first
+        let idx = 0;
+        while (sum > desiredTotal) {
+          const i = order[idx % order.length].idx;
+          if (segCounts[i] > 2) {
+            segCounts[i] -= 1;
+            sum--;
+          }
+          idx++;
+          // guard: if all at min then break
+          if (idx > order.length * 3) break;
+        }
+      }
+    }
+  }
+
+  // now sample per segment
   for (let i = 0; i < n - 1; i++) {
     const p0 = points[i];
     const p1 = points[i + 1];
@@ -55,17 +118,15 @@ export function bezierSpline(
     let curvature = curvatureFn(segmentPos);
     if (!Number.isFinite(curvature)) curvature = 0;
 
+    const segCount = segCounts[Math.min(i, segCounts.length - 1)] ?? Math.max(2, Math.round(typeof segments === 'number' ? segments : 8));
+
     // Sharp-mode: if curvature magnitude is large, sample the segment linearly.
     if (Math.abs(curvature) >= SHARP_THRESHOLD) {
-      // linear sample (avoids smoothing) — this produces a hard corner at p1
-      // but we still want to include samples contiguously; avoid duplicating the start point
-      const linearSamples = sampleLinear(p0, p1, segments);
+      const linearSamples = sampleLinear(p0, p1, segCount);
       if (i === 0) {
-        // first segment: include all samples
         result.push(...linearSamples);
       } else {
-        // subsequent segments: drop duplicate first sample (it equals previous last)
-        result.push(...linearSamples.slice(1));
+        result.push(...linearSamples.slice(1)); // avoid duplicate start point
       }
       continue;
     }
@@ -85,10 +146,9 @@ export function bezierSpline(
       y: p1.y - dy2 * curvature,
     };
 
-    // sample cubic Bezier for t in [0..1]. To avoid duplicated points between segments,
-    // include t=0 for first segment but skip t=0 for subsequent segments.
-    for (let step = 0; step <= segments; step++) {
-      const t = step / segments;
+    // sample cubic Bezier for t in [0..1] using segCount
+    for (let step = 0; step <= segCount; step++) {
+      const t = step / segCount;
       if (i > 0 && step === 0) continue; // skip duplicate point (handled by previous segment)
       const mt = 1 - t;
       const x =
