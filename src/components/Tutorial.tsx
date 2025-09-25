@@ -242,7 +242,7 @@ export default function Tutorial({ onComplete, participantId }: TutorialProps) {
                 <div className="bg-white rounded-2xl p-6 shadow-2xl">
                     <div className="flex items-start justify-between gap-4">
                         <div>
-                            <h3 className="text-2xl font-bold">{steps[index].title}</h3>
+                            <h3 className="text-2xl font-bold text-slate-800">{steps[index].title}</h3>
                             <p className="mt-2 text-sm text-slate-600">{steps[index].description}</p>
                             {participantId && (
                                 <p className="mt-3 text-xs text-slate-400">Participant ID: {participantId}</p>
