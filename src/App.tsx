@@ -38,10 +38,10 @@ import {
   initSegmentValuesForPath,
   resampleSegmentsToPath,
   pointGraphFromSegmentValues,
-  resamplePointGraph,
+  //resamplePointGraph,
   segmentDurations,
   cumulativeTimes,
-  findSegmentIndex,
+  //findSegmentIndex,
 } from './utils/segmentUtils';
 
 
@@ -61,6 +61,11 @@ export default function App() {
     const force = !!opts?.force;
     const alreadyCompleted = !!sessionStorage.getItem('tutorialCompleted');
     if (alreadyCompleted && !force) return false;
+
+    // NEW: reset theme/state before opening
+    setShowSplash(false);
+    setShowStartScreen(false);
+
     setStarted(true);
     setShowTutorial(true);
     return true;
@@ -153,9 +158,9 @@ export default function App() {
   }, [pathPoints.length]);
 
   // new for the QoL graph to canvas tweak
-  const [segmentDurationsArr, setSegmentDurationsArr] = useState<number[]>([]);
-  const [segmentCumulative, setSegmentCumulative] = useState<number[]>([]);
-  const [computedTotalDuration, setComputedTotalDuration] = useState<number>(totalDuration); // keep user-editable fallback
+  const [, setSegmentDurationsArr] = useState<number[]>([]);
+  const [, setSegmentCumulative] = useState<number[]>([]);
+  const [, setComputedTotalDuration] = useState<number>(totalDuration); // keep user-editable fallback
 
   useEffect(() => {
     // baseSpeed can be used to globally scale speed; keep 1 by default
@@ -413,10 +418,11 @@ export default function App() {
 
                     <HelpButton
                       id="help-button"
+                      isOperator={devMenuOpen}   // NEW
                       onReplayTutorial={() => {
                         const alreadyCompleted = !!sessionStorage.getItem('tutorialCompleted');
                         if (alreadyCompleted) {
-                          const ok = window.confirm("You've already completed the tutorial this session. Replay it? This will reset your tutorial answers for this session.");
+                          const ok = window.confirm("You've already completed the tutorial this session. Replay it?");
                           if (!ok) return;
                           sessionStorage.removeItem('tutorialCompleted');
                           sessionStorage.removeItem('chosenSize');
@@ -424,6 +430,11 @@ export default function App() {
                           sessionStorage.removeItem('hasProlific');
                           sessionStorage.removeItem('prolificID');
                           setTutorialCompleted(false);
+
+                          // NEW: reset visual flow
+                          setShowSplash(false);
+                          setShowStartScreen(false);
+                          setStarted(false);
                         }
                         openTutorial({ force: true });
                       }}
