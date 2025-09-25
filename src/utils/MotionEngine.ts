@@ -55,90 +55,90 @@ function applyTempoWarp(t: number, intensity: number) {
  * Uses the same logic as MotionEngine.buildSchedule, but returns just positions.
  */
 export function computeTrajectory(
-  pathPoints: Point[],
-  opts: {
-    directnessMap: ParamMap;
-    tempoMap: ParamMap;
-    segments?: number;
-    curvatureBaseScale?: number;
-    samplesPerSegment?: number;
-  }
+    pathPoints: Point[],
+    opts: {
+        directnessMap: ParamMap;
+        tempoMap: ParamMap;
+        segments?: number;
+        curvatureBaseScale?: number;
+        samplesPerSegment?: number;
+    }
 ): Point[] {
-  if (!pathPoints || pathPoints.length === 0) return [];
+    if (!pathPoints || pathPoints.length === 0) return [];
 
-  const segments = opts.segments ?? 20;
-  const curvatureBaseScale = opts.curvatureBaseScale ?? 1.0;
+    const segments = opts.segments ?? 20;
+    const curvatureBaseScale = opts.curvatureBaseScale ?? 1.0;
 
-  // directness drives curvature deformation
-  const curvatureFn = (s: number) => {
-    const directness = Math.max(-1, Math.min(1, opts.directnessMap.evaluate(s) || 0));
-    return directness * curvatureBaseScale;
-  };
+    // directness drives curvature deformation
+    const curvatureFn = (s: number) => {
+        const directness = Math.max(-1, Math.min(1, opts.directnessMap.evaluate(s) || 0));
+        return directness * curvatureBaseScale;
+    };
 
-  // oversample raw curve
-  const oversampleMultiplier = 4;
-  const internalSamplesPerSegment = Math.max(
-    4,
-    Math.round((opts.samplesPerSegment ?? segments) * oversampleMultiplier)
-  );
-  const rawSamples = bezierSpline(pathPoints, internalSamplesPerSegment, curvatureFn);
-  if (!rawSamples.length) return [];
+    // oversample raw curve
+    const oversampleMultiplier = 4;
+    const internalSamplesPerSegment = Math.max(
+        4,
+        Math.round((opts.samplesPerSegment ?? segments) * oversampleMultiplier)
+    );
+    const rawSamples = bezierSpline(pathPoints, internalSamplesPerSegment, curvatureFn);
+    if (!rawSamples.length) return [];
 
-  // cumulative distances
-  const dists: number[] = new Array(rawSamples.length).fill(0);
-  for (let i = 1; i < rawSamples.length; i++) {
-    dists[i] =
-      dists[i - 1] +
-      Math.hypot(rawSamples[i].x - rawSamples[i - 1].x, rawSamples[i].y - rawSamples[i - 1].y);
-  }
-  const totalLen = dists[dists.length - 1] || 1e-6;
+    // cumulative distances
+    const dists: number[] = new Array(rawSamples.length).fill(0);
+    for (let i = 1; i < rawSamples.length; i++) {
+        dists[i] =
+            dists[i - 1] +
+            Math.hypot(rawSamples[i].x - rawSamples[i - 1].x, rawSamples[i].y - rawSamples[i - 1].y);
+    }
+    const totalLen = dists[dists.length - 1] || 1e-6;
 
-  // tempoFn biases spacing along the curve
-  const tempoFn = (s: number) => {
-    const v = opts.tempoMap.evaluate(s) || 0;
-    return Math.max(0.01, 1 + v); // ensure positive density
-  };
+    // tempoFn biases spacing along the curve
+    const tempoFn = (s: number) => {
+        const v = opts.tempoMap.evaluate(s) || 0;
+        return Math.max(0.01, 1 + v); // ensure positive density
+    };
 
-  // build a warped cumulative distribution function (CDF) for tempo
-  const warped: number[] = new Array(rawSamples.length);
-  warped[0] = 0;
-  for (let i = 1; i < rawSamples.length; i++) {
-    const sNorm = dists[i] / totalLen;
-    const weight = tempoFn(sNorm);
-    warped[i] = warped[i - 1] + (dists[i] - dists[i - 1]) * weight;
-  }
-  const warpedTotal = warped[warped.length - 1];
+    // build a warped cumulative distribution function (CDF) for tempo
+    const warped: number[] = new Array(rawSamples.length);
+    warped[0] = 0;
+    for (let i = 1; i < rawSamples.length; i++) {
+        const sNorm = dists[i] / totalLen;
+        const weight = tempoFn(sNorm);
+        warped[i] = warped[i - 1] + (dists[i] - dists[i - 1]) * weight;
+    }
+    const warpedTotal = warped[warped.length - 1];
 
-  // resample evenly in warped space
-  const targetSamples = Math.max(pathPoints.length * segments * 2, 20);
-  const samples: Point[] = [];
-  for (let ti = 0; ti < targetSamples; ti++) {
-    const target = (ti / (targetSamples - 1)) * warpedTotal;
+    // resample evenly in warped space
+    const targetSamples = Math.max(pathPoints.length * segments * 2, 20);
+    const samples: Point[] = [];
+    for (let ti = 0; ti < targetSamples; ti++) {
+        const target = (ti / (targetSamples - 1)) * warpedTotal;
 
-    // binary search in warped array
-    let lo = 0,
-      hi = warped.length - 1;
-    while (lo < hi) {
-      const mid = Math.floor((lo + hi) / 2);
-      if (warped[mid] < target) lo = mid + 1;
-      else hi = mid;
+        // binary search in warped array
+        let lo = 0,
+            hi = warped.length - 1;
+        while (lo < hi) {
+            const mid = Math.floor((lo + hi) / 2);
+            if (warped[mid] < target) lo = mid + 1;
+            else hi = mid;
+        }
+
+        const idx = Math.max(1, lo);
+        const wL = warped[idx - 1];
+        const wR = warped[idx];
+        const segLen = Math.max(1e-9, wR - wL);
+        const localT = (target - wL) / segLen;
+
+        const a = rawSamples[idx - 1];
+        const b = rawSamples[idx];
+        samples.push({
+            x: a.x * (1 - localT) + b.x * localT,
+            y: a.y * (1 - localT) + b.y * localT,
+        });
     }
 
-    const idx = Math.max(1, lo);
-    const wL = warped[idx - 1];
-    const wR = warped[idx];
-    const segLen = Math.max(1e-9, wR - wL);
-    const localT = (target - wL) / segLen;
-
-    const a = rawSamples[idx - 1];
-    const b = rawSamples[idx];
-    samples.push({
-      x: a.x * (1 - localT) + b.x * localT,
-      y: a.y * (1 - localT) + b.y * localT,
-    });
-  }
-
-  return samples;
+    return samples;
 }
 
 
@@ -416,7 +416,7 @@ export default class MotionEngine {
             return;
         }
 
-        // 1) raw sampling (oversampled)
+        // 1) Sample spline (oversampled)
         const rawSamples = this.sampleSpline(pathPoints, this.segments);
         const nRaw = rawSamples.length;
         if (nRaw === 0) {
@@ -427,17 +427,17 @@ export default class MotionEngine {
             return;
         }
 
-        // 2) compute normalized arc positions for rawSamples (used by corner processor)
-        const distsSamples: number[] = new Array(nRaw).fill(0);
+        // 2) Compute normalized arc positions for rawSamples
+        const cumRawDist = [0];
         for (let i = 1; i < nRaw; i++) {
-            distsSamples[i] = Math.hypot(rawSamples[i].x - rawSamples[i - 1].x, rawSamples[i].y - rawSamples[i - 1].y);
+            const dx = rawSamples[i].x - rawSamples[i - 1].x;
+            const dy = rawSamples[i].y - rawSamples[i - 1].y;
+            cumRawDist[i] = cumRawDist[i - 1] + Math.hypot(dx, dy);
         }
-        const cumSamples: number[] = new Array(nRaw).fill(0);
-        for (let i = 1; i < nRaw; i++) cumSamples[i] = cumSamples[i - 1] + distsSamples[i];
-        const totalSamplesLen = cumSamples[nRaw - 1] || 0.0001;
-        const sSamples = cumSamples.map(d => d / totalSamplesLen);
+        const totalRawDist = cumRawDist[nRaw - 1] || 1e-6;
+        const sSamples = cumRawDist.map(d => d / totalRawDist);
 
-        // 3) corner processing (non-destructive). We run it on rawSamples
+        // 3) Apply corner processing (non-destructive)
         const processed = this.applyCornerProcessing(rawSamples, pathPoints, sSamples);
         const nProcessed = processed.length;
         if (nProcessed === 0) {
@@ -448,10 +448,11 @@ export default class MotionEngine {
             return;
         }
 
-        // 4) ARC-LENGTH RESAMPLE: produce uniformly spaced points along processed curve
-        // Choose target sample count: keep proportional to original segments * path length.
-        // Use a reasonably large target so velocity mapping is smooth.
-        const targetSamples = Math.max(Math.round(pathPoints.length * this.segments * 2), Math.min(Math.round(nProcessed), pathPoints.length * this.segments));
+        // 4) Arc-length resample to uniform spacing
+        const targetSamples = Math.max(
+            Math.round(pathPoints.length * this.segments * 2),
+            Math.min(Math.round(nProcessed), pathPoints.length * this.segments)
+        );
         const samples = this.resampleByArcLength(processed, targetSamples);
         const n = samples.length;
         if (n === 0) {
@@ -462,107 +463,88 @@ export default class MotionEngine {
             return;
         }
 
-        // 5) arc distances + normalized s for resampled samples
-        const dists: number[] = new Array(n).fill(0);
+        // 5) Compute distances and normalized s along resampled curve
+        const dists: number[] = [0];
         for (let i = 1; i < n; i++) {
-            dists[i] = Math.hypot(samples[i].x - samples[i - 1].x, samples[i].y - samples[i - 1].y);
+            const dx = samples[i].x - samples[i - 1].x;
+            const dy = samples[i].y - samples[i - 1].y;
+            dists[i] = Math.hypot(dx, dy);
         }
-        const cumDist: number[] = new Array(n).fill(0);
+        const cumDist: number[] = [0];
         for (let i = 1; i < n; i++) cumDist[i] = cumDist[i - 1] + dists[i];
-        const totalLength = cumDist[n - 1] || 0.0001;
-        const sNorm: number[] = new Array(n);
-        for (let i = 0; i < n; i++) sNorm[i] = totalLength === 0 ? 0 : cumDist[i] / totalLength;
+        const totalLength = cumDist[n - 1] || 1e-6;
+        const sNorm = cumDist.map(d => d / totalLength);
 
-        // 6) TEMPO warp u(s)
-        const uWarp: number[] = new Array(n);
-        for (let i = 0; i < n; i++) {
-            const intensity = this.tempoMap.evaluate(sNorm[i]);
-            uWarp[i] = applyTempoWarp(sNorm[i], intensity);
-        }
+        // 6) Evaluate tempo warp u(s)
+        const uWarp = sNorm.map(s => {
+            const f = clamp01(this.tempoMap.evaluate(s) || 0);
+            return applyTempoWarp(s, f);
+        });
 
-        // 7) du/ds finite differences
+        // 7) Compute du/ds finite differences
         const du_ds: number[] = new Array(n).fill(0);
         for (let i = 0; i < n; i++) {
-            if (i === 0) {
-                const ds = Math.max(1e-6, sNorm[i + 1] - sNorm[i]);
-                du_ds[i] = (uWarp[i + 1] - uWarp[i]) / ds;
-            } else if (i === n - 1) {
-                const ds = Math.max(1e-6, sNorm[i] - sNorm[i - 1]);
-                du_ds[i] = (uWarp[i] - uWarp[i - 1]) / ds;
-            } else {
-                const ds = Math.max(1e-6, sNorm[i + 1] - sNorm[i - 1]);
-                du_ds[i] = (uWarp[i + 1] - uWarp[i - 1]) / ds;
-            }
+            if (i === 0) du_ds[i] = (uWarp[1] - uWarp[0]) / Math.max(1e-6, sNorm[1] - sNorm[0]);
+            else if (i === n - 1) du_ds[i] = (uWarp[n - 1] - uWarp[n - 2]) / Math.max(1e-6, sNorm[n - 1] - sNorm[n - 2]);
+            else du_ds[i] = (uWarp[i + 1] - uWarp[i - 1]) / Math.max(1e-6, sNorm[i + 1] - sNorm[i - 1]);
             if (!Number.isFinite(du_ds[i])) du_ds[i] = 0;
         }
 
-        // 8) map derivative to 0..1 speed fraction
-        let minD = Number.POSITIVE_INFINITY, maxD = Number.NEGATIVE_INFINITY;
-        for (let i = 0; i < n; i++) {
-            if (du_ds[i] < minD) minD = du_ds[i];
-            if (du_ds[i] > maxD) maxD = du_ds[i];
-        }
-        if (!Number.isFinite(minD)) minD = 0;
-        if (!Number.isFinite(maxD)) maxD = 0;
+        // 8) Optional speed fraction for debugging/visualization
+        const minD = Math.min(...du_ds);
+        const maxD = Math.max(...du_ds);
+        const speedFrac = du_ds.map(d => (Math.abs(maxD - minD) < 1e-9 ? 0.5 : clamp01((d - minD) / (maxD - minD))));
 
-        const speedFrac: number[] = new Array(n);
-        if (Math.abs(maxD - minD) < 1e-9) {
-            for (let i = 0; i < n; i++) speedFrac[i] = 0.5;
-        } else {
-            for (let i = 0; i < n; i++) {
-                speedFrac[i] = (du_ds[i] - minD) / (maxD - minD);
-                speedFrac[i] = clamp01(speedFrac[i]);
-            }
-        }
+        // 9) Map tempo to desired velocity (allow negative values for deceleration)
+        const vDesired = sNorm.map((_, i) => {
+            const f = this.tempoMap.evaluate(sNorm[i]) || 0; // can be negative
+            if (f === 0) return (this.minSpeed + this.maxSpeed) / 2; // constant speed
+            else if (f > 0) return this.minSpeed + f * (this.maxSpeed - this.minSpeed); // acceleration
+            else return this.minSpeed - f * (this.maxSpeed - this.minSpeed); // deceleration (f < 0)
+        });
 
-        const vDesired = speedFrac.map(f => this.minSpeed + f * (this.maxSpeed - this.minSpeed));
 
-        // 9) ACCEL LIMIT: fixed accel limit
+        // 10) Apply acceleration limits (forward/backward pass)
         const accelLimit = new Array(n).fill(this.accelBase);
+        const v = new Array(n).fill(0);
 
-        // 10) velocity forward/backward passes
-        const vForward = new Array(n).fill(0);
-        vForward[0] = Math.min(vDesired[0], this.maxSpeed);
+        // Forward pass
+        v[0] = Math.max(this.minSpeed, Math.min(this.maxSpeed, vDesired[0]));
         for (let i = 0; i < n - 1; i++) {
             const ds = Math.max(1e-6, dists[i + 1]);
-            const a = accelLimit[i];
-            const reachable = Math.sqrt(Math.max(0, vForward[i] * vForward[i] + 2 * a * ds));
-            vForward[i + 1] = Math.min(vDesired[i + 1], reachable);
+            const reachable = Math.sqrt(Math.max(0, v[i] * v[i] + 2 * accelLimit[i] * ds));
+            v[i + 1] = Math.min(vDesired[i + 1], reachable);
         }
-        const v = vForward.slice();
-        v[n - 1] = Math.min(v[n - 1], vDesired[n - 1]);
+
+        // Backward pass
         for (let i = n - 2; i >= 0; i--) {
             const ds = Math.max(1e-6, dists[i + 1]);
-            const a = accelLimit[i];
-            const reachableBack = Math.sqrt(Math.max(0, v[i + 1] * v[i + 1] + 2 * a * ds));
-            v[i] = Math.min(v[i], reachableBack);
+            const reachable = Math.sqrt(Math.max(0, v[i + 1] * v[i + 1] + 2 * accelLimit[i] * ds));
+            v[i] = Math.min(v[i], reachable);
         }
 
-        // 11) integrate times
-        const times: number[] = new Array(n).fill(0);
-        let cumulative = 0;
-        times[0] = 0;
+        // 11) Integrate times
+        const times: number[] = [0];
         for (let i = 0; i < n - 1; i++) {
-            const ds = Math.max(1e-6, dists[i + 1]);
             const vi = Math.max(1e-6, v[i]);
             const vj = Math.max(1e-6, v[i + 1]);
-            const dt = ds / ((vi + vj) / 2);
-            cumulative += dt;
-            times[i + 1] = cumulative;
+            const dt = dists[i + 1] / ((vi + vj) / 2);
+            times[i + 1] = times[i] + dt;
         }
 
-        let intrinsicDuration = times[n - 1] || 0.0001;
-        if (intrinsicDuration <= 0) intrinsicDuration = 1e-4;
-        const scale = (this.totalDuration && this.totalDuration > 0) ? (this.totalDuration / intrinsicDuration) : 1;
+        // 12) Scale to totalDuration
+        const intrinsicDuration = times[n - 1] || 1e-6;
+        const scale = this.totalDuration && this.totalDuration > 0 ? this.totalDuration / intrinsicDuration : 1;
         const scaledTimes = times.map(t => t * scale);
         const scaledVelocities = v.map(val => val / scale);
 
-        // store schedule (positions are the resampled points)
+        // Store final schedule
         this.schedulePositions = samples;
         this.scheduleTimes = scaledTimes;
         this.scheduleSpeedFraction = speedFrac;
         this.scheduleVelocity = scaledVelocities;
     }
+
 
     private findSampleIndexForTime(timeSec: number) {
         const times = this.scheduleTimes;
