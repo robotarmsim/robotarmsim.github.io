@@ -38,7 +38,13 @@ import {
   initSegmentValuesForPath,
   resampleSegmentsToPath,
   pointGraphFromSegmentValues,
+  resamplePointGraph,
+  segmentDurations,
+  cumulativeTimes,
+  findSegmentIndex,
 } from './utils/segmentUtils';
+
+
 
 // PathParameterMap still exists but no smoothness curve internally
 import PathParameterMap from './utils/PathParameterMap';
@@ -132,11 +138,37 @@ export default function App() {
   const [directnessSegments, setDirectnessSegments] = useState<number[]>(() => initSegmentValuesForPath(pathPoints, 0));
   const [tempoSegments, setTempoSegments] = useState<number[]>(() => initSegmentValuesForPath(pathPoints, 0));
 
+  // // If you need the actual vertex graph (for rendering in GraphEditorPanel etc.)
+  // const [directnessGraph, setDirectnessGraph] = useState<Point[]>(() =>
+  //   resamplePointGraph(directnessSegments, pathPoints)
+  // );
+  // const [tempoGraph, setTempoGraph] = useState<Point[]>(() =>
+  //   resamplePointGraph(tempoSegments, pathPoints)
+  // );
+
   // sync segments when path length changes
   useEffect(() => {
     setDirectnessSegments(prev => resampleSegmentsToPath(prev, pathPoints));
     setTempoSegments(prev => resampleSegmentsToPath(prev, pathPoints));
   }, [pathPoints.length]);
+
+  // new for the QoL graph to canvas tweak
+  const [segmentDurationsArr, setSegmentDurationsArr] = useState<number[]>([]);
+  const [segmentCumulative, setSegmentCumulative] = useState<number[]>([]);
+  const [computedTotalDuration, setComputedTotalDuration] = useState<number>(totalDuration); // keep user-editable fallback
+
+  useEffect(() => {
+    // baseSpeed can be used to globally scale speed; keep 1 by default
+    const durs = segmentDurations(pathPoints, tempoSegments, 1);
+    const cum = cumulativeTimes(durs);
+    setSegmentDurationsArr(durs);
+    setSegmentCumulative(cum);
+    const sum = durs.reduce((a, b) => a + b, 0);
+    // If user has manually set totalDuration in dev menu, you might prefer that.
+    // For now use computed sum as canonical playback duration
+    setComputedTotalDuration(sum > 0 ? sum : Math.max(0.001, totalDuration));
+  }, [pathPoints, tempoSegments, totalDuration]);
+
 
   // Build & maintain a PathParameterMap instance (only directness & tempo now)
   const pathMap = useMemo(() => {

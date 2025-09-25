@@ -55,80 +55,99 @@ function applyTempoWarp(t: number, intensity: number) {
  * Uses the same logic as MotionEngine.buildSchedule, but returns just positions.
  */
 export function computeTrajectory(
-    pathPoints: Point[],
-    opts: {
-        directnessMap: ParamMap;
-        tempoMap: ParamMap;
-        segments?: number;
-        minSpeed?: number;
-        maxSpeed?: number;
-        accelBase?: number;
-        curvatureBaseScale?: number;
-        samplesPerSegment?: number;
-    }
+  pathPoints: Point[],
+  opts: {
+    directnessMap: ParamMap;
+    tempoMap: ParamMap;
+    segments?: number;
+    curvatureBaseScale?: number;
+    samplesPerSegment?: number;
+  }
 ): Point[] {
-    if (!pathPoints || pathPoints.length === 0) return [];
+  if (!pathPoints || pathPoints.length === 0) return [];
 
-    const segments = opts.segments ?? 20;
-    const minSpeed = opts.minSpeed ?? 6;
-    const maxSpeed = opts.maxSpeed ?? 220;
-    const accelBase = opts.accelBase ?? 1200;
-    const curvatureBaseScale = opts.curvatureBaseScale ?? 1.0;
+  const segments = opts.segments ?? 20;
+  const curvatureBaseScale = opts.curvatureBaseScale ?? 1.0;
 
-    // curvatureFn
-    const curvatureFn = (s: number) => {
-        const dIntensity = Math.max(-1, Math.min(1, opts.directnessMap.evaluate(s) || 0));
-        return dIntensity * curvatureBaseScale;
-    };
+  // directness drives curvature deformation
+  const curvatureFn = (s: number) => {
+    const directness = Math.max(-1, Math.min(1, opts.directnessMap.evaluate(s) || 0));
+    return directness * curvatureBaseScale;
+  };
 
-    // oversample and resample helpers
-    const oversampleMultiplier = 4;
-    const internalSamplesPerSegment = Math.max(4, Math.round((opts.samplesPerSegment ?? segments) * oversampleMultiplier));
-    const rawSamples = bezierSpline(pathPoints, internalSamplesPerSegment, curvatureFn);
+  // oversample raw curve
+  const oversampleMultiplier = 4;
+  const internalSamplesPerSegment = Math.max(
+    4,
+    Math.round((opts.samplesPerSegment ?? segments) * oversampleMultiplier)
+  );
+  const rawSamples = bezierSpline(pathPoints, internalSamplesPerSegment, curvatureFn);
+  if (!rawSamples.length) return [];
 
-    if (!rawSamples.length) return [];
+  // cumulative distances
+  const dists: number[] = new Array(rawSamples.length).fill(0);
+  for (let i = 1; i < rawSamples.length; i++) {
+    dists[i] =
+      dists[i - 1] +
+      Math.hypot(rawSamples[i].x - rawSamples[i - 1].x, rawSamples[i].y - rawSamples[i - 1].y);
+  }
+  const totalLen = dists[dists.length - 1] || 1e-6;
 
-    // cumulative distances
-    const dists: number[] = new Array(rawSamples.length).fill(0);
-    for (let i = 1; i < rawSamples.length; i++) {
-        dists[i] = dists[i - 1] + Math.hypot(
-            rawSamples[i].x - rawSamples[i - 1].x,
-            rawSamples[i].y - rawSamples[i - 1].y
-        );
+  // tempoFn biases spacing along the curve
+  const tempoFn = (s: number) => {
+    const v = opts.tempoMap.evaluate(s) || 0;
+    return Math.max(0.01, 1 + v); // ensure positive density
+  };
+
+  // build a warped cumulative distribution function (CDF) for tempo
+  const warped: number[] = new Array(rawSamples.length);
+  warped[0] = 0;
+  for (let i = 1; i < rawSamples.length; i++) {
+    const sNorm = dists[i] / totalLen;
+    const weight = tempoFn(sNorm);
+    warped[i] = warped[i - 1] + (dists[i] - dists[i - 1]) * weight;
+  }
+  const warpedTotal = warped[warped.length - 1];
+
+  // resample evenly in warped space
+  const targetSamples = Math.max(pathPoints.length * segments * 2, 20);
+  const samples: Point[] = [];
+  for (let ti = 0; ti < targetSamples; ti++) {
+    const target = (ti / (targetSamples - 1)) * warpedTotal;
+
+    // binary search in warped array
+    let lo = 0,
+      hi = warped.length - 1;
+    while (lo < hi) {
+      const mid = Math.floor((lo + hi) / 2);
+      if (warped[mid] < target) lo = mid + 1;
+      else hi = mid;
     }
-    const totalLen = dists[dists.length - 1] || 1e-6;
 
-    // arc resample evenly
-    const targetSamples = Math.max(pathPoints.length * segments * 2, 20);
-    const samples: Point[] = [];
-    for (let ti = 0; ti < targetSamples; ti++) {
-        const target = (ti / (targetSamples - 1)) * totalLen;
-        let lo = 0, hi = rawSamples.length - 1;
-        while (lo < hi) {
-            const mid = Math.floor((lo + hi) / 2);
-            if (dists[mid] < target) lo = mid + 1;
-            else hi = mid;
-        }
-        const idx = Math.max(1, lo);
-        const dL = dists[idx - 1];
-        const dR = dists[idx];
-        const segLen = Math.max(1e-9, dR - dL);
-        const localT = (target - dL) / segLen;
-        const a = rawSamples[idx - 1];
-        const b = rawSamples[idx];
-        samples.push({
-            x: a.x * (1 - localT) + b.x * localT,
-            y: a.y * (1 - localT) + b.y * localT,
-        });
-    }
+    const idx = Math.max(1, lo);
+    const wL = warped[idx - 1];
+    const wR = warped[idx];
+    const segLen = Math.max(1e-9, wR - wL);
+    const localT = (target - wL) / segLen;
 
-    return samples;
+    const a = rawSamples[idx - 1];
+    const b = rawSamples[idx];
+    samples.push({
+      x: a.x * (1 - localT) + b.x * localT,
+      y: a.y * (1 - localT) + b.y * localT,
+    });
+  }
+
+  return samples;
 }
+
 
 export default class MotionEngine {
     private arm: RobotArm;
     private directnessMap: ParamMap;
     private tempoMap: ParamMap;
+
+    private pathPoints: Point[] = [];
 
     private segments: number;
     private minSpeed: number;
@@ -161,14 +180,35 @@ export default class MotionEngine {
         this.curvatureBaseScale = opts.curvatureBaseScale ?? 1.0;
     }
 
+    // === NEW ===
+    setPathPoints(points: Point[]) {
+        this.pathPoints = points.slice();
+        this.rebuildSchedule();
+    }
+
     setOnFrame(cb: (f: MotionFrame) => void) {
         console.log('[MotionEngine]', this._instanceId, 'setOnFrame attached', !!cb);
         this.frameCb = cb;
     }
 
+    // === UPDATED ===
     updateMaps(maps: { directnessMap?: ParamMap; tempoMap?: ParamMap }) {
         if (maps.directnessMap) this.directnessMap = maps.directnessMap;
         if (maps.tempoMap) this.tempoMap = maps.tempoMap;
+        this.rebuildSchedule(); // <--- auto update
+    }
+
+    // === NEW ===
+    private rebuildSchedule() {
+        if (this.pathPoints.length) {
+            this.buildSchedule(this.pathPoints);
+        } else {
+            this.schedulePositions = [];
+            this.scheduleTimes = [];
+            this.scheduleSpeedFraction = [];
+            this.scheduleVelocity = [];
+            this.playbackAngles = [];
+        }
     }
 
     setTotalDuration(seconds?: number) {
@@ -216,6 +256,16 @@ export default class MotionEngine {
 
     isRunning(): boolean {
         return this.animationId !== null;
+    }
+
+    public recompute(): void {
+        if (this.pathPoints.length) {
+            try {
+                this.buildSchedule(this.pathPoints);
+            } catch (err) {
+                console.warn('[MotionEngine] recompute failed:', err);
+            }
+        }
     }
 
     /**

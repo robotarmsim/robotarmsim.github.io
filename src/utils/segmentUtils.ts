@@ -27,15 +27,6 @@ export function getRelativeDistances(points: Point[]): number[] {
 /**
  * Convert per-segment values (length = pathPoints.length - 1)
  * into a vertex-style point graph (length = pathPoints.length).
- *
- * Vertex x coordinates are normalized along the path (0..1).
- * Vertex y values are derived from the segment values:
- * - If no segment values provided, y is 0 for every vertex.
- * - For interior vertices we average adjacent segment values.
- * - Endpoints take their adjacent segment value if available.
- *
- * This mapping is intentionally simple and stable: the UI displays
- * the vertex graph, and per-segment editing operates on the segmentValues array.
  */
 export function pointGraphFromSegmentValues(segmentValues: number[], pathPoints: Point[]): Point[] {
   const n = pathPoints?.length ?? 0;
@@ -63,8 +54,7 @@ export function pointGraphFromSegmentValues(segmentValues: number[], pathPoints:
 }
 
 /**
- * Initialize per-segment values for a given path (pathPoints.length - 1),
- * filled with the provided defaultValue (default 0).
+ * Initialize per-segment values for a given path (pathPoints.length - 1).
  */
 export function initSegmentValuesForPath(pathPoints: Point[], defaultValue = 0): number[] {
   const len = Math.max(0, (pathPoints?.length ?? 0) - 1);
@@ -73,12 +63,6 @@ export function initSegmentValuesForPath(pathPoints: Point[], defaultValue = 0):
 
 /**
  * Resample an existing per-segment array to match a new pathPoints length.
- * Uses linear interpolation across the index-space of segments to create a
- * new array sized (pathPoints.length - 1).
- *
- * - If prevSegments is empty, return an initSegmentValuesForPath(...).
- * - If lengths match, returns a shallow copy of prevSegments.
- * - Otherwise, linearly interpolates values.
  */
 export function resampleSegmentsToPath(prevSegments: number[], pathPoints: Point[]): number[] {
   const newLen = Math.max(0, (pathPoints?.length ?? 0) - 1);
@@ -107,9 +91,110 @@ export function resampleSegmentsToPath(prevSegments: number[], pathPoints: Point
   return res;
 }
 
+/**
+ * Rebuild a pointGraph from given pathPoints and (possibly stale) segmentValues.
+ */
+export function resamplePointGraph(segmentValues: number[], pathPoints: Point[]): Point[] {
+  const resampled = resampleSegmentsToPath(segmentValues, pathPoints);
+  return pointGraphFromSegmentValues(resampled, pathPoints);
+}
+
+/**
+ * Given old segmentValues and a new path, return a fresh segmentValues array
+ * that is interpolated to the new length.
+ */
+export function updateSegmentsOnPathChange(
+  oldSegments: number[],
+  newPath: Point[]
+): number[] {
+  return resampleSegmentsToPath(oldSegments, newPath);
+}
+
+/* -------------------- TIMING HELPERS (new) -------------------- */
+
+/**
+ * Compute Euclidean lengths for each segment (pathPoints.length - 1)
+ */
+export function segmentLengths(points: Point[]): number[] {
+  const n = Math.max(0, (points?.length ?? 0) - 1);
+  if (n <= 0) return [];
+  const out: number[] = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const a = points[i];
+    const b = points[i + 1];
+    out[i] = Math.hypot(b.x - a.x, b.y - a.y);
+  }
+  return out;
+}
+
+/**
+ * Map a tempo segment value (expected range -1..1) to a positive speed multiplier.
+ * Adjust minSpeed and maxSpeed to taste. This mapping avoids zero and very tiny speeds.
+ */
+export function tempoValueToSpeed(tempoValue: number, minSpeed = 0.4, maxSpeed = 2.5): number {
+  const v = Math.max(-1, Math.min(1, tempoValue ?? 0));
+  // map -1..1 to [minSpeed..maxSpeed] using simple linear mapping
+  const mid = (minSpeed + maxSpeed) / 2;
+  return mid + v * (maxSpeed - mid);
+}
+
+/**
+ * Compute per-segment durations from lengths and optional per-segment speed multipliers.
+ * If you provide tempoValues (length = segments), they will be converted to speeds using tempoValueToSpeed.
+ *
+ * duration = length / speed
+ */
+export function segmentDurations(points: Point[], tempoValues?: number[], baseSpeed = 1): number[] {
+  const lengths = segmentLengths(points);
+  if (lengths.length === 0) return [];
+  const speeds = lengths.map((_, i) => {
+    const tempo = tempoValues?.[i] ?? 0;
+    // tempoValueToSpeed returns a multiplier; combine with baseSpeed
+    return baseSpeed * tempoValueToSpeed(tempo);
+  });
+  return lengths.map((len, i) => {
+    const sp = Math.max(1e-4, speeds[i]); // avoid 0
+    return len / sp;
+  });
+}
+
+/**
+ * cumulativeTimes([d1, d2, d3]) => [d1, d1+d2, d1+d2+d3]
+ */
+export function cumulativeTimes(durations: number[]): number[] {
+  const out: number[] = [];
+  let sum = 0;
+  for (const d of durations) {
+    sum += d;
+    out.push(sum);
+  }
+  return out;
+}
+
+/**
+ * Find active segment index for a given time t (seconds) using cumulative times.
+ * If t <= cumulative[0] => 0.
+ * If t > cumulative[last] => last index.
+ */
+export function findSegmentIndex(t: number, cumulative: number[]): number {
+  if (!cumulative || cumulative.length === 0) return -1;
+  for (let i = 0; i < cumulative.length; i++) {
+    if (t <= cumulative[i]) return i;
+  }
+  return cumulative.length - 1;
+}
+
 export default {
   getRelativeDistances,
   pointGraphFromSegmentValues,
   initSegmentValuesForPath,
   resampleSegmentsToPath,
+  resamplePointGraph,
+  updateSegmentsOnPathChange,
+  // timing
+  segmentLengths,
+  tempoValueToSpeed,
+  segmentDurations,
+  cumulativeTimes,
+  findSegmentIndex,
 };

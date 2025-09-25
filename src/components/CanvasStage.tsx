@@ -36,7 +36,7 @@ interface CanvasStageProps {
   tempoSegments: number[];      // user edits tempo per-segment
 }
 
-// Minimal per-segment evaluator builder (same as in App originally)
+// Minimal per-segment evaluator builder -> moved from App.tsx
 function makeSegmentEvaluator(segmentValues: number[], pathPoints: Point[]) {
   return {
     evaluate: (s: number) => {
@@ -53,6 +53,13 @@ function makeSegmentEvaluator(segmentValues: number[], pathPoints: Point[]) {
   };
 }
 
+type TrajectoryState = {
+  samples: Point[];
+  velocities: number[];
+  curvatures: number[];
+  speedFrac: number[];
+};
+
 export function CanvasStage({
   width,
   height,
@@ -68,6 +75,8 @@ export function CanvasStage({
 }: CanvasStageProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [, setImagesLoaded] = useState(false);
+
+  // keep these since they are used by pointer handlers / UI
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
   const [draggingZoneId, setDraggingZoneId] = useState<number | null>(null);
   const [resizingZoneId, setResizingZoneId] = useState<number | null>(null);
@@ -89,7 +98,7 @@ export function CanvasStage({
   const DIRECTNESS_SCALE = 1.4;
   const BASE_STROKE = 1.5;
   const STROKE_SCALE = 0.02; // multiplier for velocity -> stroke width
-  const MINI_DOT_EVERY = 2; // draw larger dots every N samples
+  const MINI_DOT_EVERY = 4; // draw larger dots every N samples
 
   // Build lightweight "ParamMap" evaluators from raw per-segment arrays.
   const directnessMap = useMemo(
@@ -103,62 +112,89 @@ export function CanvasStage({
 
   // MotionEngine instance (kept across renders)
   const engineRef = useRef<MotionEngine | null>(null);
+
+  // Create engine once (or recreate if arm changes)
   useEffect(() => {
-    // Create engine once (or recreate if arm changes)
-    if (!engineRef.current) {
-      engineRef.current = new MotionEngine(arm, {
-        directnessMap,
-        tempoMap,
-        segments: SAMPLES_PER_SEGMENT,
-        minSpeed: 6,
-        maxSpeed: 220,
-        accelBase: 1200,
-        curvatureBaseScale: 1.0,
-      });
-    } else {
-      // update maps and segments if changed
-      try {
-        engineRef.current.updateMaps({ directnessMap, tempoMap });
-        // segments is private in the class, but update at runtime for correctness
-        (engineRef.current as any).segments = SAMPLES_PER_SEGMENT;
-      } catch (err) {
-        // swallow; not critical
-        // console.warn('CanvasStage: engine updateMaps failed', err);
-      }
-    }
+    // create with initial maps (these will be updated by the map-effect below when maps change)
+    engineRef.current = new MotionEngine(arm, {
+      directnessMap,
+      tempoMap,
+      segments: SAMPLES_PER_SEGMENT,
+      minSpeed: 6,
+      maxSpeed: 220,
+      accelBase: 1200,
+      curvatureBaseScale: 1.0,
+    });
 
     return () => {
-      // optional cleanup on unmount
       engineRef.current?.destroy();
       engineRef.current = null;
     };
+    // recreate only when RobotArm instance actually changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [arm]); // only create/destroy when arm instance changes
+  }, [arm]);
 
-  // Rebuild schedule into engine when path or maps change: useMemo to avoid doing it every paint
-  const trajectory = useMemo(() => {
+  // Keep engine maps & segments in sync whenever segment arrays or pathPoints change.
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    // keep engine maps current
+    engine.updateMaps({ directnessMap, tempoMap });
+    // update segments for sampling density
+    try { (engine as any).segments = SAMPLES_PER_SEGMENT; } catch {}
+    // no return - this effect simply pushes new maps into the engine
+  }, [directnessMap, tempoMap, SAMPLES_PER_SEGMENT]);
+
+  // Keep engine pathPoints in sync and build schedule immediately.
+  // Call setPathPoints on the engine (it will rebuild schedule synchronously).
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    if (!pathPoints || pathPoints.length === 0) {
+      // clear schedule
+      engine.setPathPoints([]);
+      return;
+    }
+    engine.setPathPoints(pathPoints);
+  }, [pathPoints]);
+
+  // Trajectory state (cached for draw)
+  const [trajectory, setTrajectory] = useState<TrajectoryState>({
+    samples: [],
+    velocities: [],
+    curvatures: [],
+    speedFrac: [],
+  });
+
+  // Whenever relevant inputs change, read schedule out of engine and compute curvatures/sNorm
+  useEffect(() => {
     const engine = engineRef.current;
     if (!engine || !pathPoints || pathPoints.length === 0) {
-      return { samples: [] as Point[], velocities: [] as number[], curvatures: [] as number[] };
+      setTrajectory({ samples: [], velocities: [], curvatures: [], speedFrac: [] });
+      return;
     }
 
-    // buildSchedule is private but available at runtime; call it so engine fills its schedule arrays
-    try {
-      (engine as any).buildSchedule(pathPoints);
-    } catch (err) {
-      // If buildSchedule isn't available for some reason, fallback to empty
-      // console.warn('CanvasStage: could not call engine.buildSchedule', err);
+    // Ensure engine maps are current (defensive; we already update in separate effect)
+    engine.updateMaps({ directnessMap, tempoMap });
+    try { (engine as any).segments = SAMPLES_PER_SEGMENT; } catch {}
+
+    // engine.setPathPoints(pathPoints) was already called by the pathPoints effect,
+    // but calling again is cheap (it will rebuild schedule synchronously).
+    engine.setPathPoints(pathPoints);
+
+    // Read schedule via public getter
+    const sched = engine.getSchedule();
+    const samples: Point[] = (sched.positions ?? []).slice();
+    const velocities: number[] = (sched.velocities ?? []).slice();
+    const speedFrac: number[] = (sched.speedFractions ?? []).slice();
+
+    if (samples.length === 0) {
+      setTrajectory({ samples: [], velocities: [], curvatures: [], speedFrac: [] });
+      return;
     }
 
-    // read internals (runtime access) - these are set by buildSchedule
-    const samples: Point[] = ((engine as any).schedulePositions ?? []).slice();
-    const velocities: number[] = ((engine as any).scheduleVelocity ?? []).slice();
-    const speedFrac: number[] = ((engine as any).scheduleSpeedFraction ?? []).slice();
-
-    // compute sNorm for samples (normalized arc-length along samples)
+    // compute normalized s along arc-length for samples
     const n = samples.length;
-    if (n === 0) return { samples: [], velocities: [], curvatures: [] };
-
     const dists: number[] = new Array(n).fill(0);
     for (let i = 1; i < n; i++) {
       dists[i] = Math.hypot(samples[i].x - samples[i - 1].x, samples[i].y - samples[i - 1].y);
@@ -169,19 +205,16 @@ export function CanvasStage({
     const sNorm: number[] = new Array(n);
     for (let i = 0; i < n; i++) sNorm[i] = totalLen === 0 ? 0 : cumDist[i] / totalLen;
 
+    // compute a curvature visualization value from directnessMap (scaled)
     const curvatures = sNorm.map(s => {
       const d = directnessMap.evaluate(s) || 0;
       return Math.max(-1, Math.min(1, d * DIRECTNESS_SCALE));
     });
 
-    // Ensure arrays align in length: velocities may be shorter/longer; clamp usage in draw
-    return { samples, velocities, curvatures, speedFrac };
-  }, [pathPoints, directnessSegments, tempoSegments, directnessMap, tempoMap]);
+    setTrajectory({ samples, velocities, curvatures, speedFrac });
+  }, [pathPoints, directnessSegments, tempoSegments, directnessMap, tempoMap, SAMPLES_PER_SEGMENT]);
 
-  useEffect(() => {
-    tipTrailRef.current = [];
-  }, [pathPoints]);
-
+  // pointer helpers and handlers (kept intact)
   function getMousePos(e: React.PointerEvent): Point {
     if (!canvasRef.current) return { x: 0, y: 0 };
     const rect = canvasRef.current.getBoundingClientRect();
@@ -313,6 +346,7 @@ export function CanvasStage({
     setResizingZoneId(null);
   }
 
+  // draw function (keeps same visuals / order you had)
   function draw(ctx: CanvasRenderingContext2D) {
     ctx.clearRect(0, 0, width, height);
 
@@ -340,7 +374,7 @@ export function CanvasStage({
       ctx.stroke();
     }
 
-    // trajectory from the MotionEngine schedule (built in trajectory useMemo)
+    // trajectory from the MotionEngine schedule (rebuilt by effects)
     const { samples, velocities, curvatures } = trajectory;
 
     if (samples.length > 1) {
@@ -454,6 +488,7 @@ export function CanvasStage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [height]);
 
+  // main draw effect
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -461,8 +496,9 @@ export function CanvasStage({
     if (!ctx) return;
     draw(ctx);
     // redraw when trajectory or visuals change
-  }, [pathPoints, angles, draggingIndex, draggingZoneId, resizingZoneId, zones, directnessSegments, tempoSegments, width, height, arm, trajectory]);
+  }, [trajectory, pathPoints, angles, draggingIndex, draggingZoneId, resizingZoneId, zones, width, height, arm]);
 
+  // update zone visited state + in-avoid detection
   useEffect(() => {
     const [angle1Local, angle2Local] = angles;
     const [l1, l2] = arm.limbLengths;
