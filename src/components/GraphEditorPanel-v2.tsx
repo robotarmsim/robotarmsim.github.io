@@ -1,31 +1,37 @@
 // src/components/GraphEditorPanel.tsx
-import React, { useRef, useState, useMemo, useCallback } from 'react';
-import type { Point } from '../utils/RobotArm';
-import { RotateCw } from 'lucide-react';
+import React, { useRef, useMemo, useState, useCallback } from "react";
+import type { Point } from "../utils/RobotArm";
 
 interface Props {
   id?: string;
   label: string;
-  pathPoints: Point[];
-  segmentValues: number[];
+  pathPoints: Point[];              // actual points user added
+  segmentValues: number[];          // same length as pathPoints
   setSegmentValues: (vals: number[]) => void;
+  width?: number;
+  height?: number;
 }
 
 const DEFAULT_WIDTH = 320;
 const DEFAULT_HEIGHT = 150;
 const SNAP_THRESHOLD = 0.02;
 
+function mapValueToColor(v: number) {
+  const c = Math.max(-1, Math.min(1, v));
+  return c < 0 ? `rgba(249,115,115,0.95)` : `rgba(96,165,250,0.95)`;
+}
+
 function catmullRomToBezierPath(pts: { x: number; y: number }[], tension = 0.5) {
-  if (pts.length === 0) return '';
+  if (!pts || pts.length === 0) return "";
   if (pts.length === 1) return `M ${pts[0].x} ${pts[0].y}`;
   if (pts.length === 2) return `M ${pts[0].x} ${pts[0].y} L ${pts[1].x} ${pts[1].y}`;
 
   let d = `M ${pts[0].x} ${pts[0].y}`;
   for (let i = 0; i < pts.length - 1; i++) {
-    const p0 = i > 0 ? pts[i - 1] : pts[i];
+    const p0 = i - 1 >= 0 ? pts[i - 1] : pts[i];
     const p1 = pts[i];
     const p2 = pts[i + 1];
-    const p3 = i < pts.length - 2 ? pts[i + 2] : p2;
+    const p3 = i + 2 < pts.length ? pts[i + 2] : p2;
 
     const cp1x = p1.x + ((p2.x - p0.x) / 6) * tension;
     const cp1y = p1.y + ((p2.y - p0.y) / 6) * tension;
@@ -37,193 +43,137 @@ function catmullRomToBezierPath(pts: { x: number; y: number }[], tension = 0.5) 
   return d;
 }
 
-function mapValueToColor(v: number) {
-  const c = Math.max(-1, Math.min(1, v));
-  return c < 0 ? `rgba(249,115,115,0.95)` : `rgba(96,165,250,0.95)`;
-}
-
-export function GraphEditorPanel({
+export default function GraphEditorPanel({
+  id,
   label,
   pathPoints,
   segmentValues,
   setSegmentValues,
-  id,
+  width = DEFAULT_WIDTH,
+  height = DEFAULT_HEIGHT,
 }: Props) {
   const svgRef = useRef<SVGSVGElement | null>(null);
-  const [draggingSeg, setDraggingSeg] = useState<number | null>(null);
-  const [hoverSeg, setHoverSeg] = useState<number | null>(null);
+  const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
 
-  const width = DEFAULT_WIDTH;
-  const height = DEFAULT_HEIGHT;
   const baselineY = height / 2;
 
-  const relativeDistances = useMemo(() => {
-    if (pathPoints.length < 2) return [0, 1];
-    const dists: number[] = [0];
-    let total = 0;
-    for (let i = 1; i < pathPoints.length; i++) {
-      const dx = pathPoints[i].x - pathPoints[i - 1].x;
-      const dy = pathPoints[i].y - pathPoints[i - 1].y;
-      total += Math.hypot(dx, dy);
-      dists.push(total);
-    }
-    return total > 0 ? dists.map(d => d / total) : dists.map(() => 0);
-  }, [pathPoints]);
+  const anchors = useMemo(() => {
+    return pathPoints.map((p, i) => ({
+      x: (i / (pathPoints.length - 1)) * width,
+      y: baselineY - (segmentValues[i] ?? 0) * (height / 2),
+      value: segmentValues[i] ?? 0,
+    }));
+  }, [pathPoints, segmentValues, width, height, baselineY]);
 
-  const segmentMidpoints = useMemo(() => {
-    return relativeDistances.slice(0, -1).map((_, i) => {
-      const tMid = (relativeDistances[i] + relativeDistances[i + 1]) / 2;
-      const x = tMid * width;
-      const segVal = segmentValues[i] ?? 0;
-      const normalizedY = (segVal + 1) / 2;
-      const y = (1 - normalizedY) * height;
-      return { x, y, value: segVal };
-    });
-  }, [relativeDistances, segmentValues, width, height]);
+  const curvePath = useMemo(() => catmullRomToBezierPath(anchors, 0.6), [anchors]);
 
-  // curve points: start (baseline), mids, end (baseline)
-  const curvePts = useMemo(() => {
-    const start = { x: 0, y: baselineY };
-    const end = { x: width, y: baselineY };
-    return [start, ...segmentMidpoints.map(m => ({ x: m.x, y: m.y })), end];
-  }, [segmentMidpoints, baselineY, width]);
+  const fillPath = useMemo(() => {
+    if (!anchors.length) return "";
+    let d = `M ${anchors[0].x} ${baselineY}`;
+    anchors.forEach((a) => (d += ` L ${a.x} ${a.y}`));
+    d += ` L ${anchors[anchors.length - 1].x} ${baselineY} Z`;
+    return d;
+  }, [anchors, baselineY]);
 
-  const curvePath = useMemo(() => catmullRomToBezierPath(curvePts, 0.6), [curvePts]);
-
-  // filled version (to baseline)
-  const filledPath = useMemo(() => {
-    if (!curvePath) return '';
-    return `${curvePath} L ${width} ${baselineY} L 0 ${baselineY} Z`;
-  }, [curvePath, width, baselineY]);
-
-  const getMousePosNormalized = (e: React.PointerEvent) => {
-    const rect = svgRef.current?.getBoundingClientRect();
-    if (!rect) return { x: 0, y: 0 };
-    const x = (e.clientX - rect.left) / rect.width;
-    const y = 1 - (e.clientY - rect.top) / rect.height;
-    return { x: Math.max(0, Math.min(1, x)), y: Math.max(0, Math.min(1, y)) };
-  };
+  const getMouseNormalizedY = useCallback(
+    (e: React.PointerEvent) => {
+      const rect = svgRef.current?.getBoundingClientRect();
+      if (!rect) return 0;
+      let y = e.clientY - rect.top;
+      y = Math.max(0, Math.min(height, y));
+      return (baselineY - y) / (height / 2); // -1..1
+    },
+    [baselineY, height]
+  );
 
   const onPointerMove = useCallback(
     (e: React.PointerEvent) => {
-      if (draggingSeg === null) return;
-      const { y: normY } = getMousePosNormalized(e);
-      let val = (normY - 0.5) * 2;
+      if (draggingIndex === null) return;
+      let val = getMouseNormalizedY(e);
       if (Math.abs(val) < SNAP_THRESHOLD) val = 0;
       val = Math.max(-1, Math.min(1, val));
-      const next = segmentValues.slice();
-      next[draggingSeg] = val;
+      const next = [...segmentValues];
+      next[draggingIndex] = val;
       setSegmentValues(next);
     },
-    [draggingSeg, segmentValues, setSegmentValues]
+    [draggingIndex, segmentValues, setSegmentValues, getMouseNormalizedY]
   );
 
-  const onPointerUp = useCallback(() => setDraggingSeg(null), []);
-  const handlePointerDownSegment = (i: number, e: React.PointerEvent) => {
+  const onPointerUp = useCallback(() => setDraggingIndex(null), []);
+
+  const handlePointerDown = (i: number, e: React.PointerEvent) => {
     e.stopPropagation();
-    setDraggingSeg(i);
+    setDraggingIndex(i);
     (e.target as Element).setPointerCapture?.(e.pointerId);
   };
 
-  const resetValues = () => setSegmentValues(segmentValues.map(() => 0));
-
   return (
-    <div className="flex flex-col relative" style={{ userSelect: 'none' }}>
-      <strong className="text-xs text-gray-300">{label}</strong>
-      <button
-        onClick={resetValues}
-        className="absolute right-2 top-5 p-1 text-gray-400 hover:text-white"
-        title="Reset values to zero"
-        type="button"
+    <div style={{ display: "flex", flexDirection: "column", userSelect: "none" }}>
+      <strong style={{ color: "#e5e7eb", marginBottom: 4 }}>{label}</strong>
+      <svg
+        ref={svgRef}
+        id={id}
+        width={width}
+        height={height}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerLeave={onPointerUp}
+        style={{ background: "#111", borderRadius: 6 }}
       >
-        <RotateCw size={16} />
-      </button>
+        {/* baseline */}
+        <line
+          x1={0}
+          y1={baselineY}
+          x2={width}
+          y2={baselineY}
+          stroke="#4b5563"
+          strokeDasharray="4,3"
+          strokeWidth={1}
+        />
 
-      <div className="rounded bg-neutral-900 p-2 shadow-inner w-full h-full flex justify-center">
-        <svg
-          ref={svgRef}
-          viewBox={`0 0 ${width} ${height}`}
-          preserveAspectRatio="xMidYMid meet"
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerLeave={onPointerUp}
-          onPointerCancel={onPointerUp}
-          className="block w-full h-full"
-        >
-          {/* background */}
-          <rect width={width} height={height} rx={6} fill="#111" stroke="#333" />
+        {/* shaded fill under curve */}
+        <path d={fillPath} fill="rgba(96,165,250,0.1)" />
 
-          {/* baseline */}
-          <line
-            x1={0}
-            x2={width}
-            y1={baselineY}
-            y2={baselineY}
-            stroke="#4b5563"
-            strokeDasharray="4,3"
-            strokeWidth={1}
-          />
-          <text x={4} y={baselineY - 4} fontSize={10} fill="#9ca3af">
-            baseline
-          </text>
+        {/* smooth curve */}
+        <path
+          d={curvePath}
+          fill="none"
+          stroke="rgba(100,180,255,0.9)"
+          strokeWidth={2}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
 
-          {/* triangles */}
-          <polygon
-            points={`${0},${baselineY - 6} ${0},${baselineY + 6} ${8},${baselineY}`}
-            fill="#9ca3af"
-          />
-          <polygon
-            points={`${width},${baselineY - 6} ${width},${baselineY + 6} ${width - 8},${baselineY}`}
-            fill="#9ca3af"
-          />
-
-          {/* fill shading */}
-          {filledPath && (
-            <path d={filledPath} fill="rgba(100,180,255,0.15)" stroke="none" />
-          )}
-
-          {/* curve stroke */}
-          {curvePath && (
-            <path
-              d={curvePath}
-              fill="none"
-              stroke="rgba(100,180,255,0.9)"
-              strokeWidth={2}
-            />
-          )}
-
-          {/* handles + numeric labels */}
-          {segmentMidpoints.map((m, i) => {
-            const isDragging = draggingSeg === i;
-            const isHover = hoverSeg === i;
-            const outerR = isDragging ? 9 : isHover ? 8 : 7;
-            return (
-              <g
-                key={`mid-${i}`}
-                transform={`translate(${m.x}, ${m.y})`}
-                onPointerDown={(e) => handlePointerDownSegment(i, e)}
-                onMouseEnter={() => setHoverSeg(i)}
-                onMouseLeave={() => setHoverSeg(null)}
-                style={{ cursor: 'ns-resize', pointerEvents: 'all' }}
+        {/* anchors */}
+        {anchors.map((a, i) => {
+          const outerR = 7;
+          const innerR = 3;
+          return (
+            <g
+              key={i}
+              transform={`translate(${a.x}, ${a.y})`}
+              onPointerDown={(e) => handlePointerDown(i, e)}
+              style={{ cursor: "ns-resize", pointerEvents: "all" }}
+            >
+              {/* outer halo */}
+              <circle r={outerR} fill="white" stroke="black" strokeWidth={0.6} opacity={0.8} />
+              {/* inner color */}
+              <circle r={innerR} fill={mapValueToColor(a.value)} />
+              {/* value label inside point */}
+              <text
+                x={0}
+                y={0}
+                fontSize={10}
+                fill="#e5e7eb"
+                textAnchor="middle"
+                alignmentBaseline="middle"
               >
-                <circle r={outerR} fill="white" stroke="black" strokeWidth={0.6} />
-                <circle r={3} fill={mapValueToColor(m.value)} />
-                <text
-                  y={-10}
-                  textAnchor="middle"
-                  fontSize={10}
-                  fill="#e5e7eb"
-                >
-                  {m.value.toFixed(2)}
-                </text>
-                
-              </g>
-            );
-          })}
-        </svg>
-      </div>
+                {i + 1}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
     </div>
   );
 }
-
-export default GraphEditorPanel;
