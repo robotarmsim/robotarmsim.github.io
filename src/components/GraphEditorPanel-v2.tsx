@@ -47,7 +47,7 @@ export function GraphEditorPanel({
   pathPoints,
   segmentValues,
   setSegmentValues,
-  id,
+  //id,
 }: Props) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [draggingSeg, setDraggingSeg] = useState<number | null>(null);
